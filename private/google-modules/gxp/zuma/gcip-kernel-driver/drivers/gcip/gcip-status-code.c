@@ -14,44 +14,97 @@ enum gcip_status_code gcip_status_code_convert_from_errno(int errno)
 	switch (errno) {
 	case 0:
 		return GCIP_STATUS_CODE_OK;
-	case -ECANCELED:
-		return GCIP_STATUS_CODE_CANCELLED;
 	case -EINVAL:
+	case -ENAMETOOLONG:
+	case -E2BIG:
+	case -EDESTADDRREQ:
+	case -EDOM:
 	case -EFAULT:
+	case -EILSEQ:
+	case -ENOPROTOOPT:
+	case -ENOTSOCK:
+	case -ENOTTY:
+	case -EPROTOTYPE:
+	case -ESPIPE:
 		return GCIP_STATUS_CODE_INVALID_ARGUMENT;
-	case -ETIME:
 	case -ETIMEDOUT:
 		return GCIP_STATUS_CODE_DEADLINE_EXCEEDED;
-	case -ENOENT:
 	case -ENODEV:
+	case -ENOENT:
+	case -ENOMEDIUM:
+	case -ENXIO:
+	case -ESRCH:
 		return GCIP_STATUS_CODE_NOT_FOUND;
 	case -EEXIST:
-		return GCIP_STATUS_CODE_ALREADY_EXISTS;
-	case -EACCES:
-		return GCIP_STATUS_CODE_PERMISSION_DENIED;
-	case -ENOMEM:
-	case -ENOSPC:
-		return GCIP_STATUS_CODE_RESOURCE_EXHAUSTED;
-	case -EBUSY:
-		return GCIP_STATUS_CODE_FAILED_PRECONDITION;
-	case -EDEADLK:
-	case -EOWNERDEAD:
+	case -EADDRNOTAVAIL:
 	case -EALREADY:
-		return GCIP_STATUS_CODE_ABORTED;
-	case -ERANGE:
-	case -EOVERFLOW:
-		return GCIP_STATUS_CODE_OUT_OF_RANGE;
-	case -EOPNOTSUPP:
-		return GCIP_STATUS_CODE_UNIMPLEMENTED;
-	case -EIO:
-		return GCIP_STATUS_CODE_INTERNAL;
-	case -EAGAIN:
-		return GCIP_STATUS_CODE_UNAVAILABLE;
-	case -EBADMSG:
-	case -ENOTRECOVERABLE:
-		return GCIP_STATUS_CODE_DATA_LOSS;
+	case -ENOTUNIQ:
+		return GCIP_STATUS_CODE_ALREADY_EXISTS;
 	case -EPERM:
-		return GCIP_STATUS_CODE_UNAUTHENTICATED;
+	case -EACCES:
+	case -ENOKEY:
+	case -EROFS:
+		return GCIP_STATUS_CODE_PERMISSION_DENIED;
+	case -ENOTEMPTY:
+	case -EISDIR:
+	case -ENOTDIR:
+	case -EADDRINUSE:
+	case -EBADF:
+	case -EBADFD:
+	case -EBUSY:
+	case -ECHILD:
+	case -EISCONN:
+	case -EISNAM:
+	case -ENOTBLK:
+	case -ENOTCONN:
+	case -EPIPE:
+	case -ESHUTDOWN:
+	case -ETXTBSY:
+	case -EUNATCH:
+		return GCIP_STATUS_CODE_FAILED_PRECONDITION;
+	case -ENOSPC:
+	case -EDQUOT:
+	case -EMFILE:
+	case -EMLINK:
+	case -ENFILE:
+	case -ENOBUFS:
+	case -ENODATA:
+	case -ENOMEM:
+	case -EUSERS:
+		return GCIP_STATUS_CODE_RESOURCE_EXHAUSTED;
+	case -ECHRNG:
+	case -EFBIG:
+	case -EOVERFLOW:
+	case -ERANGE:
+		return GCIP_STATUS_CODE_OUT_OF_RANGE;
+	case -ENOPKG:
+	case -EOPNOTSUPP:
+	case -EAFNOSUPPORT:
+	case -EPFNOSUPPORT:
+	case -EPROTONOSUPPORT:
+	case -ESOCKTNOSUPPORT:
+	case -EXDEV:
+		return GCIP_STATUS_CODE_UNIMPLEMENTED;
+	case -EAGAIN:
+	case -ECOMM:
+	case -ECONNREFUSED:
+	case -ECONNABORTED:
+	case -ECONNRESET:
+	case -EINTR:
+	case -EHOSTDOWN:
+	case -EHOSTUNREACH:
+	case -ENETDOWN:
+	case -ENETRESET:
+	case -ENETUNREACH:
+	case -ENOLCK:
+	case -ENOLINK:
+	case -ENONET:
+		return GCIP_STATUS_CODE_UNAVAILABLE;
+	case -EDEADLK:
+	case -ESTALE:
+		return GCIP_STATUS_CODE_ABORTED;
+	case -ECANCELED:
+		return GCIP_STATUS_CODE_CANCELLED;
 	default:
 		return GCIP_STATUS_CODE_UNKNOWN;
 	}
