@@ -1,1 +1,1 @@
-../aosp/modules.bzl
+ack/modules.bzl

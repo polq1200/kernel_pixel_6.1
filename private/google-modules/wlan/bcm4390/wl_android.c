@@ -2045,13 +2045,19 @@ wl_android_art_apply_config(struct net_device *art_ndev)
 	uint16 mybuf_len = sizeof(mybuf);
 	u8 resp_buf[WLC_IOCTL_SMLEN] = {0};
 	struct bcm_cfg80211 *cfg = wl_get_cfg(art_ndev);
+	dhd_pub_t *dhdp = (dhd_pub_t *)(cfg->pub);
 
 	if (!art_ndev) {
 		WL_ERR(("ART I/F is not present\n"));
 		return -ENODEV;
 	}
 
-	if (ETHER_ISNULLADDR(cfg->art_bssid)) {
+	if (!dhdp) {
+		WL_ERR(("dhd_pub is null\n"));
+		return -EINVAL;
+	}
+
+	if (ETHER_ISNULLADDR(dhdp->art_bssid)) {
 		WL_DBG_MEM(("ART BSSID is not set. Skip macaddr filtering\n"));
 		return BCME_OK;
 	}
@@ -2060,7 +2066,7 @@ wl_android_art_apply_config(struct net_device *art_ndev)
 	pxtlv->len = sizeof(wl_art_cmd_config_v1_t);
 
 	art_cmd_config.version = WL_ART_CONFIG_VER_1;
-	eacopy(&cfg->art_bssid, &art_cmd_config.mac_addr);
+	eacopy(&dhdp->art_bssid, &art_cmd_config.mac_addr);
 	/* set bssid */
 	pxtlv->len = htod16(sizeof(wl_art_cmd_config_v1_t));
 	ret = bcm_pack_xtlv_entry((uint8 **)&pxtlv, &mybuf_len, WL_ART_CMD_CONFIG,
@@ -2092,6 +2098,7 @@ wl_android_art_set_bssid(struct net_device *dev, char *command, int total_len)
 	char *token = NULL;
 	u8 mac_addr[ETH_ALEN] = {0};
 	struct bcm_cfg80211 *cfg = wl_get_cfg(dev);
+	dhd_pub_t *dhdp = (dhd_pub_t *)(cfg->pub);
 
 
 	/* drop command */
@@ -2125,7 +2132,7 @@ wl_android_art_set_bssid(struct net_device *dev, char *command, int total_len)
 	}
 
 	/* cache macaddr */
-	eacopy(&mac_addr, cfg->art_bssid);
+	eacopy(&mac_addr, dhdp->art_bssid);
 	return BCME_OK;
 }
 

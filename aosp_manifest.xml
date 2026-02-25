@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="aosp" fetch="https://android.googlesource.com/"/>
-  <default revision="android-gs-caimito-6.1-android16" remote="aosp" sync-j="4"/>
-  <project path="aosp" name="kernel/common" groups="partner">
+  <default revision="android-gs-caimito-6.1-android16-qpr3-beta" remote="aosp" sync-j="4"/>
+  <project path="common/ack" name="kernel/common" groups="partner">
     <linkfile dest="common/build.config.constants" src="build.config.constants"/>
     <linkfile dest="common/modules.bzl" src="modules.bzl"/>
+    <linkfile dest="aosp" src="."/>
   </project>
+  <project path="common/gki" name="kernel/common" groups="partner"/>
   <project path="private/devices/google/common" name="kernel/devices/google/common" groups="partner">
     <linkfile dest="WORKSPACE" src="bazel.WORKSPACE"/>
     <linkfile dest="device.bazelrc" src="device.bazelrc"/>
@@ -123,6 +125,7 @@
   <project path="private/google-modules/wlan/wcn6740/cnss2" name="kernel/google-modules/wlan/qcom/wcn6740/cnss2" groups="partner"/>
   <project path="private/google-modules/wlan/wcn6740/wlan" name="kernel/google-modules/wlan/qcom/wcn6740/wlan" groups="partner"/>
   <project path="private/google-modules/wlan/wlan_ptracker" name="kernel/google-modules/wlan/wlan_ptracker" groups="partner"/>
+  <project path="private/google-modules/wlan/wonder" name="kernel/google-modules/wlan/wonder" groups="partner"/>
   <project path="build/kernel" name="kernel/build" groups="partner">
     <linkfile dest="tools/bazel" src="kleaf/bazel.sh"/>
     <linkfile dest="build/build.sh" src="build.sh"/>
