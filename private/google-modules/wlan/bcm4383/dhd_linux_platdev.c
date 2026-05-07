@@ -1,7 +1,7 @@
 /*
  * Linux platform device for DHD WLAN adapter
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -37,11 +37,6 @@
 #include <wl_android.h>
 #endif
 #include <dhd_plat.h>
-#if defined(CONFIG_WIFI_CONTROL_FUNC) || defined(CUSTOMER_HW4)
-#include <linux/wlan_plat.h>
-#else
-#include <dhd_plat.h>
-#endif /* CONFIG_WIFI_CONTROL_FUNC */
 #ifdef CONFIG_DTS
 #include<linux/regulator/consumer.h>
 #include<linux/of_gpio.h>
@@ -56,7 +51,7 @@
 
 #if defined(SUPPORT_MULTIPLE_BOARD_REVISION)
 #include <linux/of.h>
-extern char* dhd_get_device_dt_name(void);
+extern char *dhd_get_device_dt_name(void);
 #endif /* SUPPORT_MULTIPLE_BOARD_REVISION */
 
 #ifdef DHD_WIFI_SHUTDOWN
@@ -64,12 +59,12 @@ extern void wifi_plat_dev_drv_shutdown(struct platform_device *pdev);
 #endif
 
 #ifdef CONFIG_DTS
-struct regulator *wifi_regulator = NULL;
+struct regulator *wifi_regulator;
 #endif /* CONFIG_DTS */
 
 bool cfg_multichip = FALSE;
-bcmdhd_wifi_platdata_t *dhd_wifi_platdata = NULL;
-static int wifi_plat_dev_probe_ret = 0;
+bcmdhd_wifi_platdata_t *dhd_wifi_platdata;
+static int wifi_plat_dev_probe_ret;
 static bool is_power_on = FALSE;
 
 
@@ -94,7 +89,7 @@ struct wifi_platform_data dhd_wlan_control = {0};
 
 static int dhd_wifi_platform_load(void);
 
-extern void* wl_cfg80211_get_dhdp(struct net_device *dev);
+extern void *wl_cfg80211_get_dhdp(struct net_device *dev);
 
 #ifdef BCMDHD_MODULAR
 extern int dhd_wlan_init(void);
@@ -123,7 +118,8 @@ extern bool check_bcm4335_rev(void);
 #define PCIE_RC_DEVICE_ID 0xffff
 #endif /* CONFIG_X86 */
 
-wifi_adapter_info_t* dhd_wifi_platform_get_adapter(uint32 bus_type, uint32 bus_num, uint32 slot_num)
+wifi_adapter_info_t *
+dhd_wifi_platform_get_adapter(uint32 bus_type, uint32 bus_num, uint32 slot_num)
 {
 	int i;
 
@@ -142,7 +138,8 @@ wifi_adapter_info_t* dhd_wifi_platform_get_adapter(uint32 bus_type, uint32 bus_n
 	return NULL;
 }
 
-void* wifi_platform_prealloc(wifi_adapter_info_t *adapter, int section, unsigned long size)
+void *
+wifi_platform_prealloc(wifi_adapter_info_t *adapter, int section, unsigned long size)
 {
 	void *alloc_ptr = NULL;
 	struct wifi_platform_data *plat_data;
@@ -164,7 +161,8 @@ void* wifi_platform_prealloc(wifi_adapter_info_t *adapter, int section, unsigned
 	return NULL;
 }
 
-void* wifi_platform_get_prealloc_func_ptr(wifi_adapter_info_t *adapter)
+void *
+wifi_platform_get_prealloc_func_ptr(wifi_adapter_info_t *adapter)
 {
 	struct wifi_platform_data *plat_data;
 
@@ -198,20 +196,34 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 	}
 #endif /* WBRC_HW_QUIRKS */
 
+	if (on && dhd_plat_get_wlan_reg_on_gpio() == 1) {
+		DHD_PRINT(("%s: wl_reg_on gpio already high\n", __FUNCTION__));
+		is_power_on = TRUE;
+		goto exit;
+	}
+
+	if (!on && dhd_plat_get_wlan_reg_on_gpio() == 0) {
+		DHD_PRINT(("%s: wl_reg_on gpio already low\n", __FUNCTION__));
+		is_power_on = FALSE;
+		goto exit;
+	}
+
 #ifdef CONFIG_DTS
 	if (on) {
 		err = regulator_enable(wifi_regulator);
 		is_power_on = TRUE;
-	}
-	else {
+	} else {
 		err = regulator_disable(wifi_regulator);
 		is_power_on = FALSE;
 	}
 	if (err < 0)
 		DHD_ERROR(("%s: regulator enable/disable failed", __FUNCTION__));
 #else
-	if (!adapter || !adapter->wifi_plat_data)
-		return -EINVAL;
+	if (!adapter || !adapter->wifi_plat_data) {
+		err = -EINVAL;
+		goto exit;
+	}
+
 	plat_data = adapter->wifi_plat_data;
 
 	DHD_PRINT(("%s = %d, delay: %lu msec\n", __FUNCTION__, on, msec));
@@ -222,8 +234,7 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 			if (bcm_bt_lock(lock_cookie_wifi) != 0)
 				printk("** WiFi: timeout in acquiring bt lock**\n");
 			printk("%s: btlock acquired\n", __FUNCTION__);
-		}
-		else {
+		} else {
 			/* For a exceptional case, release btlock */
 			bcm_bt_unlock(lock_cookie_wifi);
 		}
@@ -248,6 +259,7 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 
 #endif /* CONFIG_DTS */
 
+exit:
 #ifdef WBRC_HW_QUIRKS
 	if (on) {
 		wl2wbrc_wlan_after_regon();
@@ -395,7 +407,11 @@ static int wifi_plat_dev_drv_probe(struct platform_device *pdev)
 	return wifi_plat_dev_probe_ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+static void wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#else
 static int wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) */
 {
 	wifi_adapter_info_t *adapter;
 
@@ -418,7 +434,9 @@ static int wifi_plat_dev_drv_remove(struct platform_device *pdev)
 #ifdef CONFIG_DTS
 	regulator_put(wifi_regulator);
 #endif /* CONFIG_DTS */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
 	return 0;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) */
 }
 
 static int wifi_plat_dev_drv_suspend(struct platform_device *pdev, pm_message_t state)
@@ -485,7 +503,7 @@ static int wifi_platdev_match(struct device *dev, void *data)
 	const struct platform_device *pdev;
 
 	GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST();
-	name = (char*)data;
+	name = (char *)data;
 	pdev = to_platform_device(dev);
 	GCC_DIAGNOSTIC_POP();
 
@@ -507,7 +525,8 @@ static int wifi_ctrlfunc_register_drv(void)
 	dev2 = bus_find_device(&platform_bus_type, NULL, WIFI_PLAT_NAME2, wifi_platdev_match);
 
 #ifdef BCMDHD_MODULAR
-	if ((err = dhd_wlan_init())) {
+	err = dhd_wlan_init();
+	if (err) {
 		DHD_ERROR(("%s: dhd_wlan_init() failed(%d)\n", __FUNCTION__, err));
 		return err;
 	}
@@ -654,7 +673,11 @@ static int bcmdhd_wifi_plat_dev_drv_probe(struct platform_device *pdev)
 	return dhd_wifi_platform_load();
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+static void bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#else
 static int bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) */
 {
 	int i;
 	wifi_adapter_info_t *adapter;
@@ -666,7 +689,9 @@ static int bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
 		wifi_platform_set_power(adapter, FALSE, WIFI_TURNOFF_DELAY);
 		wifi_platform_bus_enumerate(adapter, FALSE);
 	}
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
 	return 0;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) */
 }
 
 static struct platform_driver dhd_wifi_platform_dev_driver = {
@@ -957,12 +982,17 @@ static int dhd_wifi_platform_load(void)
 		wl_android_init();
 #endif /* OEM_ANDROID */
 
-	if ((err = dhd_wifi_platform_load_usb()))
+	err = dhd_wifi_platform_load_usb();
+	if (err) {
 		goto end;
-	else if ((err = dhd_wifi_platform_load_sdio()))
-		goto end;
-	else
-		err = dhd_wifi_platform_load_pcie();
+	} else {
+		err = dhd_wifi_platform_load_sdio();
+		if (err) {
+			goto end;
+		} else {
+			err = dhd_wifi_platform_load_pcie();
+		}
+	}
 
 end:
 
@@ -982,7 +1012,7 @@ concate_custom_board_revision(char *nv_path)
 {
 	uint32 board_revision = 0;
 	struct device_node *root_node = NULL;
-	char* wlan_node = NULL;
+	char *wlan_node = NULL;
 
 	if (!nv_path) {
 		DHD_ERROR(("nv_path is null\n"));
@@ -1017,7 +1047,8 @@ concate_custom_board_revision(char *nv_path)
 #endif /* SUPPORT_MULTIPLE_BOARD_REVISION */
 
 /* Weak functions that can be overridden in Platform specific implementation */
-char* __attribute__ ((weak)) dhd_get_device_dt_name(void)
+char *
+__attribute__ ((weak)) dhd_get_device_dt_name(void)
 {
 	return NULL;
 }
@@ -1039,6 +1070,17 @@ void __attribute__ ((weak)) dhd_plat_pcie_deregister_event(void *plat_info)
 }
 
 void __attribute__ ((weak)) dhd_plat_l1ss_ctrl(bool ctrl)
+{
+	return;
+}
+
+void __attribute__ ((weak)) dhd_plat_pm_runtime_init(void *plat_info,
+		struct pci_dev *pdev)
+{
+	return;
+}
+
+void __attribute__ ((weak)) dhd_plat_pm_runtime_exit(void *plat_info)
 {
 	return;
 }
@@ -1069,6 +1111,16 @@ void __attribute__ ((weak)) dhd_plat_rx_pktcount(void *plat_info, uint cnt)
 }
 
 int __attribute__ ((weak)) dhd_plat_pcie_suspend(void *plat_info)
+{
+	return 0;
+}
+
+int __attribute__ ((weak)) dhd_plat_pcie_suspend_nosave(void *plat_info)
+{
+	return 0;
+}
+
+int __attribute__ ((weak)) dhd_plat_pcie_savestate(void *plat_info)
 {
 	return 0;
 }
@@ -1108,6 +1160,11 @@ uint32 __attribute__ ((weak)) dhd_plat_get_rc_device_id(void)
 	return PCIE_RC_DEVICE_ID;
 }
 
+int __attribute__ ((weak)) dhd_plat_check_pcie_state(void)
+{
+	return 1;
+}
+
 uint16 __attribute__ ((weak)) dhd_plat_align_rxbuf_size(uint16 rxbufpost_sz)
 {
 	return rxbufpost_sz;
@@ -1128,4 +1185,19 @@ __attribute__ ((weak)) dhd_get_platform_naming_for_nvram_clmblob_file(download_t
 	char *file_name)
 {
 	return BCME_ERROR;
+}
+
+int __attribute__ ((weak)) dhd_plat_get_wlan_reg_on_gpio(void)
+{
+	DHD_ERROR(("%s:%s: enter\n", __FILE__, __func__));
+	return BCME_ERROR;
+}
+
+int __attribute__ ((weak)) dhd_plat_get_wlan_host_wake_up_gpio(void)
+{
+	return BCME_ERROR;
+}
+
+__weak void dhd_plat_pcie_dump_debug(void)
+{
 }

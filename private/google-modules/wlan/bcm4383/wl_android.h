@@ -1,7 +1,7 @@
 /*
  * Linux cfg80211 driver - Android related functions
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -120,18 +120,19 @@ s32 wl_genl_send_msg(struct net_device *ndev, u32 event_type,
 s32 wl_netlink_send_msg(int pid, int type, int seq, const void *data, size_t size);
 
 /* hostap mac mode */
-#define MACLIST_MODE_DISABLED   0
-#define MACLIST_MODE_DENY       1
-#define MACLIST_MODE_ALLOW      2
+#define MACLIST_MODE_DISABLED   0u
+#define MACLIST_MODE_DENY       1u
+#define MACLIST_MODE_ALLOW      2u
 
 /* max number of assoc list */
-#define MAX_NUM_OF_ASSOCLIST    64
+#define MAX_NUM_OF_ASSOCLIST    64u
 
 /* Bandwidth */
-#define WL_CH_BANDWIDTH_20MHZ 20
-#define WL_CH_BANDWIDTH_40MHZ 40
-#define WL_CH_BANDWIDTH_80MHZ 80
-#define WL_CH_BANDWIDTH_160MHZ 160
+#define WL_CH_BANDWIDTH_20MHZ   20u
+#define WL_CH_BANDWIDTH_40MHZ   40u
+#define WL_CH_BANDWIDTH_80MHZ   80u
+#define WL_CH_BANDWIDTH_160MHZ  160u
+#define WL_CH_BANDWIDTH_320MHZ  320u
 
 /* max number of mac filter list
  * restrict max number to 10 as maximum cmd string size is 255
@@ -204,8 +205,37 @@ extern int wl_android_set_he_6g_band(struct net_device *dev, bool enable);
 #endif /* CUSTOM_CONTROL_HE_6G_FEATURES */
 extern int wl_android_rcroam_turn_on(struct net_device *dev, int rcroam_enab);
 #ifdef WL_TWT
+typedef enum wifi_error {
+	WIFI_SUCCESS                    = 0,
+	WIFI_ERROR_NONE                 = 0,
+	WIFI_ERROR_UNKNOWN              = -1,
+	WIFI_ERROR_UNINITIALIZED        = -2,
+	WIFI_ERROR_NOT_SUPPORTED        = -3,
+	WIFI_ERROR_NOT_AVAILABLE        = -4,
+	WIFI_ERROR_INVALID_ARGS         = -5,
+	WIFI_ERROR_INVALID_REQUEST_ID   = -6,
+	WIFI_ERROR_TIMED_OUT            = -7,
+	WIFI_ERROR_TOO_MANY_REQUESTS    = -8,
+	WIFI_ERROR_OUT_OF_MEMORY        = -9,
+	WIFI_ERROR_BUSY                 = -10
+} wifi_error_t;
 extern int wl_update_twt_setup_evt_info(struct sk_buff *skb, void *event_data);
 extern int wl_update_twt_teardown_evt_info(struct sk_buff *skb, void *event_data);
 extern int wl_update_twt_info_frm_evt_info(struct sk_buff *skb, void *event_data);
 extern int wl_update_twt_notify_evt_info(struct sk_buff *skb, void *event_data);
 #endif /* WL_TWT */
+#ifdef WLSCHED_PM
+extern int wl_update_sched_pm_teardown_evt_info(struct sk_buff *skb, void *event_data);
+#endif /* WLSCHED_PM */
+
+#ifdef DHD_ART
+extern int wl_android_art_apply_config(struct net_device *dev);
+#endif /* DHD_ART */
+#ifdef WES_SUPPORT
+extern int wl_android_get_roam_scan_freqs(struct net_device *dev, char *command,
+		int total_len, char *cmd);
+extern int
+wl_android_set_roam_scan_freqs(struct net_device *dev, char *command);
+extern int
+wl_android_add_roam_scan_freqs(struct net_device *dev, char *command, uint cmdlen);
+#endif /* WES_SUPPORT */

@@ -1,7 +1,7 @@
 /*
  * DHD debug ring header file - interface
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -88,8 +88,8 @@ typedef struct dhd_dbg_ring {
 	uint32  rp_tmp;		/* tmp read pointer */
 	uint32  log_level;	/* log_level */
 	uint32  threshold;	/* threshold bytes */
-	void *  ring_buf;	/* pointer of actually ring buffer */
-	void *  lock;		/* lock for ring access */
+	void *ring_buf;	/* pointer of actually ring buffer */
+	void *lock;		/* lock for ring access */
 	struct ring_statistics stat;	/* statistics */
 	enum dbg_ring_state state;	/* ring state enum */
 	bool tail_padded;	/* writer does not have enough space */
@@ -143,12 +143,16 @@ int dhd_dbg_ring_update(void *dbg_ring, uint32 w_len);
 #endif /* DHD_PKT_LOGGING_DBGRING */
 int dhd_dbg_ring_push(dhd_dbg_ring_t *ring, dhd_dbg_ring_entry_t *hdr, void *data);
 int dhd_dbg_ring_pull(dhd_dbg_ring_t *ring, void *data, uint32 buf_len,
-		bool strip_hdr, int* num_entries);
+		bool strip_hdr, int *num_entries);
 int dhd_dbg_ring_pull_single(dhd_dbg_ring_t *ring, void *data, uint32 buf_len,
 	bool strip_header);
 uint32 dhd_dbg_ring_get_pending_len(dhd_dbg_ring_t *ring);
 void dhd_dbg_ring_sched_pull(dhd_dbg_ring_t *ring, uint32 pending_len,
 		os_pullreq_t pull_fn, void *os_pvt, const int id);
+#ifdef DHD_DMPD
+int dhd_dbg_ring_set_sched_pull(dhd_dbg_ring_t *ring, bool flag);
+void dhd_dbg_ring_reset_buf(dhd_pub_t *dhdp, int ring_id);
+#endif /* DHD_DMPD */
 int dhd_dbg_ring_config(dhd_dbg_ring_t *ring, int log_level, uint32 threshold);
 void dhd_dbg_ring_start(dhd_dbg_ring_t *ring);
 #endif /* __DHD_DBG_RING_H__ */

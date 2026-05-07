@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2025, Broadcom.
+# Copyright (C) 2026, Broadcom.
 #
 #      Unless you and Broadcom execute a separate written software license
 # agreement governing use of this software, this software is licensed to you
@@ -34,11 +34,23 @@ ifneq ($(KERNEL_SRC),)
     KCFLAGS += -I$(ROOT_DIR)/private/google-modules/soc/rdo/include
     # For "include/linux/platform_data/sscoredump.h"
     KCFLAGS += -I$(ROOT_DIR)/private/google-modules/soc/gs/include
-    EXTRA_SYMBOLS+= $(wildcard $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/Module.symvers)
+    ifneq ("$(wildcard $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/Module.symvers)","")
+      EXTRA_SYMBOLS += $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/Module.symvers
+    endif
+    ifneq ("$(wildcard $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/pci/google-pcie-v1_Module.symvers)","")
+      EXTRA_SYMBOLS += $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/pci/google-pcie-v1_Module.symvers
+    endif
+    ifneq ("$(wildcard $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/pci/google-pcie-v2_Module.symvers)","")
+      EXTRA_SYMBOLS += $(COMMON_OUT_DIR)/private/google-modules/soc/rdo/pci/google-pcie-v2_Module.symvers
+    endif
   endif
   EXTRA_CFLAGS+="-Wno-missing-prototypes"
 endif
 
+NOA_SYMBOL_PATH := $(COMMON_OUT_DIR)/private/google-modules/noa/common/Module.symvers
+ifneq ($(wildcard $(NOA_SYMBOL_PATH)),)
+  EXTRA_SYMBOLS += $(NOA_SYMBOL_PATH)
+endif
 
 # Define and "all" target, which isn't really needed but doesn't hurt.
 all: modules

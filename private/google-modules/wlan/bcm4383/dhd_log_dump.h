@@ -1,7 +1,7 @@
 /*
  * log_dump - debugability support for dumping logs to file - header file
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -203,7 +203,7 @@ typedef struct dbg_log_ts_s {
 /* Special buffer is allocated as separately in prealloc */
 #define LOG_DUMP_SPECIAL_MAX_BUFSIZE (8 * 1024)
 
-#define LOG_DUMP_MAX_FILESIZE (8 *1024 * 1024) /* 8 MB default */
+#define LOG_DUMP_MAX_FILESIZE (8 * 1024 * 1024) /* 8 MB default */
 
 #ifdef CONFIG_LOG_BUF_SHIFT
 /* 15% of kernel log buf size, if for example klog buf size is 512KB
@@ -278,8 +278,7 @@ typedef struct {
 } log_dump_section_hdr_t;
 
 #ifdef DHD_DEBUGABILITY_LOG_DUMP_RING
-struct dhd_dbg_ring_buf
-{
+struct dhd_dbg_ring_buf {
 	void *dhd_pub;
 };
 extern struct dhd_dbg_ring_buf g_ring_buf;
@@ -291,8 +290,7 @@ typedef struct dhd_debug_dump_ring_entry {
 } dhd_debug_dump_ring_entry_t;
 
 /* below structure describe ring buffer. */
-struct dhd_log_dump_buf
-{
+struct dhd_log_dump_buf {
 #if defined(__linux__) || defined(ANDROID) || defined(OEM_ANDROID)
 	spinlock_t lock;
 #endif
@@ -301,9 +299,9 @@ struct dhd_log_dump_buf
 	unsigned int wraparound;
 	unsigned long max;
 	unsigned int remain;
-	char* present;
-	char* front;
-	char* buffer;
+	char *present;
+	char *front;
+	char *buffer;
 };
 
 typedef struct {
@@ -328,9 +326,9 @@ void dhd_schedule_log_dump(dhd_pub_t *dhdp, void *type);
 void dhd_log_dump_trigger(dhd_pub_t *dhdp, int subcmd);
 void dhd_log_dump_vendor_trigger(dhd_pub_t *dhd_pub);
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 int dhd_debug_dump_get_ring_num(int sec_type);
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 int dhd_log_dump_ring_to_file(dhd_pub_t *dhdp, void *ring_ptr, void *file,
 		unsigned long *file_posn, log_dump_section_hdr_t *sec_hdr, char *text_hdr,
 		uint32 sec_type);
@@ -408,7 +406,7 @@ void dhd_nla_put_sssr_dump_len(void *ndev, uint32 *arr_len);
 int dhd_get_debug_dump(void *dev, const void *user_buf, uint32 len, int type);
 #ifdef DHD_PKT_LOGGING
 extern int dhd_os_get_pktlog_dump(void *dev, const void *user_buf, uint32 len);
-extern spinlock_t* dhd_os_get_pktlog_lock(dhd_pub_t *dhdp);
+extern spinlock_t *dhd_os_get_pktlog_lock(dhd_pub_t *dhdp);
 extern uint32 dhd_os_get_pktlog_dump_size(struct net_device *dev);
 extern void dhd_os_get_pktlogdump_filename(struct net_device *dev, char *dump_path, int len);
 #endif /* DHD_PKT_LOGGING */
@@ -419,9 +417,13 @@ extern int dhd_os_get_axi_error_dump_size(struct net_device *dev);
 extern void dhd_os_get_axi_error_filename(struct net_device *dev, char *dump_path, int len);
 #endif /*  DNGL_AXI_ERROR_LOGGING */
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
-extern int dhd_debug_dump_to_ring(dhd_pub_t *dhdp);
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#ifdef DHD_DMPD
+extern int dhd_debug_dump_to_ring(dhd_pub_t *dhdp, const char *reason);
+extern int dhd_get_debug_dump_buf_info(dhd_pub_t *dhdp,
+	void **b1, uint32 *l1, void **b2, uint32 *l2);
+extern int dhd_get_debug_dump_buf_merged(dhd_pub_t *dhdp,
+	void *buf, int len);
+#endif /* DHD_DMPD */
 
 extern char *dhd_log_dump_get_timestamp(void);
 #ifdef DHD_EFI

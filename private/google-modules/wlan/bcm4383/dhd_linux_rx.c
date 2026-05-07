@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD),
  * Linux-specific network interface for receive(rx) path
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -62,7 +62,11 @@
 #include <linux/rtc.h>
 #include <linux/namei.h>
 #include <asm/uaccess.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#include <linux/unaligned.h>
+#else
 #include <asm/unaligned.h>
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0) */
 #include <dhd_linux_priv.h>
 
 #include <epivers.h>
@@ -173,6 +177,8 @@
 #endif
 
 #include <net/ndisc.h>
+#include <net/ieee80211_radiotap.h>
+#include <linux/ieee80211.h>
 
 /* wl event forwarding */
 #ifdef WL_EVENT_ENAB
@@ -186,14 +192,21 @@ module_param(wl_event_enable, uint, 0660);
 int dhd_rxf_prio = CUSTOM_RXF_PRIO_SETTING;
 module_param(dhd_rxf_prio, int, 0);
 
+/* For debug, define this define in the Makefile */
+#ifdef DHD_MON_DBG
+#define DHD_MON_TRACE DHD_ERROR
+#else
+#define DHD_MON_TRACE DHD_TRACE
+#endif /* DHD_MON_DBG */
+
 /* Request scheduling of the bus rx frame */
 static void dhd_os_rxflock(dhd_pub_t *pub);
 static void dhd_os_rxfunlock(dhd_pub_t *pub);
 
 static int dhd_wl_host_event(dhd_info_t *dhd, int ifidx, void *pktdata, uint16 pktlen,
-                wl_event_msg_t *event_ptr, void **data_ptr);
+	wl_event_msg_t *event_ptr, void **data_ptr);
 
-static inline int dhd_rxf_enqueue(dhd_pub_t *dhdp, void* skb)
+static inline int dhd_rxf_enqueue(dhd_pub_t *dhdp, void *skb)
 {
 	uint32 store_idx;
 	uint32 sent_idx;
@@ -234,7 +247,7 @@ static inline int dhd_rxf_enqueue(dhd_pub_t *dhdp, void* skb)
 	return BCME_OK;
 }
 
-static inline void* dhd_rxf_dequeue(dhd_pub_t *dhdp)
+static inline void *dhd_rxf_dequeue(dhd_pub_t *dhdp)
 {
 	uint32 store_idx;
 	uint32 sent_idx;
@@ -266,7 +279,7 @@ static inline void* dhd_rxf_dequeue(dhd_pub_t *dhdp)
 
 #if (defined(DHD_WET) || defined(DHD_MCAST_REGEN) || defined(DHD_L2_FILTER))
 static void
-dhd_update_rx_pkt_chainable_state(dhd_pub_t* dhdp, uint32 idx)
+dhd_update_rx_pkt_chainable_state(dhd_pub_t *dhdp, uint32 idx)
 {
 	dhd_info_t *dhd = dhdp->info;
 	dhd_if_t *ifp;
@@ -295,7 +308,7 @@ dhd_update_rx_pkt_chainable_state(dhd_pub_t* dhdp, uint32 idx)
 void dhd_rx_wq_wakeup(struct work_struct *ptr)
 {
 	struct dhd_rx_tx_work *work;
-	struct dhd_pub * pub;
+	struct dhd_pub *pub;
 
 	work = container_of(ptr, struct dhd_rx_tx_work, work);
 
@@ -485,6 +498,11 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			RX_PKTFREE(dhdp->osh, eh->ether_type, pktbuf, FALSE);
 			continue;
 		}
+		if (ifp->llc_enabled && ifp->llc_hdr) {
+			if (ntoh16(eh->ether_type) < ETHER_TYPE_MIN) {
+				dhd_generic_llc_to_eth_hdr(dhdp, ifidx, eh, pktbuf);
+			}
+		}
 
 		/* Dropping only data packets before registering net device to avoid kernel panic */
 #ifndef PROP_TXSTATUS_VSDB
@@ -582,18 +600,18 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			sta = dhd_find_sta(dhdp, ifidx, (void *)eh->ether_shost);
 			ret = dhd_wmf_packets_handle(dhdp, pktbuf, sta, ifidx, 1);
 			switch (ret) {
-				case WMF_TAKEN:
-					/* The packet is taken by WMF. Continue to next iteration */
-					continue;
-				case WMF_DROP:
-					/* Packet DROP decision by WMF. Toss it */
-					DHD_ERROR(("%s: WMF decides to drop packet\n",
-						__FUNCTION__));
-					PKTCFREE(dhdp->osh, pktbuf, FALSE);
-					continue;
-				default:
-					/* Continue the transmit path */
-					break;
+			case WMF_TAKEN:
+				/* The packet is taken by WMF. Continue to next iteration */
+				continue;
+			case WMF_DROP:
+				/* Packet DROP decision by WMF. Toss it */
+				DHD_ERROR(("%s: WMF decides to drop packet\n",
+					__FUNCTION__));
+				PKTCFREE(dhdp->osh, pktbuf, FALSE);
+				continue;
+			default:
+				/* Continue the transmit path */
+				break;
 			}
 		}
 #endif /* DHD_WMF */
@@ -604,7 +622,7 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			int delta_sync;
 			int sync_per_sec;
 			u64 curr_time = DIV_U64_BY_U32(OSL_LOCALTIME_NS(), NSEC_PER_SEC);
-			ifp->tsync_rcvd ++;
+			ifp->tsync_rcvd++;
 			delta_sync = ifp->tsync_rcvd - ifp->tsyncack_txed;
 			delta_sec = curr_time - ifp->last_sync;
 			if (delta_sec > 1) {
@@ -673,9 +691,11 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 					continue;
 				}
 #endif /* HNDCTF */
-				if ((ntoh16(eh->ether_type) != ETHER_TYPE_IAPP_L2_UPDATE) &&
-					((npkt = PKTDUP(dhdp->osh, pktbuf)) != NULL))
-					dhd_sendpkt(dhdp, ifidx, npkt);
+				if (ntoh16(eh->ether_type) != ETHER_TYPE_IAPP_L2_UPDATE) {
+					npkt = PKTDUP(dhdp->osh, pktbuf);
+					if (npkt != NULL)
+						dhd_sendpkt(dhdp, ifidx, npkt);
+				}
 			}
 		}
 
@@ -694,6 +714,9 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			if (ETHER_ISUCAST(eh->ether_dhost)) {
 				if (dhd_find_sta(dhdp, ifidx, (void *)eh->ether_dhost)) {
 					dhdp->rx_forward++; /* Local count */
+#ifdef GOOGLE_DAL_CORE
+					DHD_PKT_SET_FORWARD(pktbuf, 1);
+#endif /* GOOGLE_DAL_CORE */
 					dhd_sendpkt(dhdp, ifidx, pktbuf);
 					continue;
 				}
@@ -761,7 +784,7 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 #if defined(DHD_WAKE_STATUS) && defined(DHD_WAKEPKT_DUMP)
 		if (pkt_wake) {
 			DHD_PRINT(("##### dhdpcie_host_wake caused by packets\n"));
-			dhd_prhex("[wakepkt_dump]", (char*)dump_data, MIN(len, 64), DHD_RPM_VAL);
+			dhd_prhex("[wakepkt_dump]", (char *)dump_data, MIN(len, 64), DHD_RPM_VAL);
 			DHD_PRINT(("config check in_suspend: %d\n", dhdp->in_suspend));
 #ifdef ARP_OFFLOAD_SUPPORT
 			DHD_PRINT(("arp hmac_update:%d \n", dhdp->hmac_updated));
@@ -784,17 +807,25 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 		skb->len = len;
 
 		/* TODO: re-look into dropped packets. */
+#ifdef DHD_PKT_MON_DUAL_STA
+		DHD_DBG_PKT_MON_RX(dhdp, ifidx, skb, FRAME_TYPE_ETHERNET_II, FALSE);
+#else
 		DHD_DBG_PKT_MON_RX(dhdp, skb, FRAME_TYPE_ETHERNET_II, FALSE);
+#endif /* DHD_PKT_MON_DUAL_STA */
+
 		if (ntoh16(skb->protocol) == ETHER_TYPE_BRCM) {
 			DHD_LOG_ROUTE_EVENTS(dhdp->logger, skb, skb->len);
 		}
+
+		DHD_LOG_PKT(dhdp->logger, LOG_TYPE_DATA_PKT, skb, skb->len);
+
 		/* Strip header, count, deliver upward */
 		skb_pull(skb, ETH_HLEN);
 
 #ifdef ENABLE_WAKEUP_PKT_DUMP
 		if (dhd_mmc_wake) {
 			DHD_INFO(("wake_pkt %s(%d)\n", __FUNCTION__, __LINE__));
-			prhex("wake_pkt", (char*) eth, MIN(len, 64));
+			prhex("wake_pkt", (char *) eth, MIN(len, 64));
 
 			update_wake_pkt_info(skb);
 			DHD_PRINT(("wake_pkt %s(%d), raw_info=0x%016llx\n",
@@ -969,7 +1000,7 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 					wcp->rx_arp++;
 				if (ntoh16(skb->protocol) == ETHER_TYPE_IP) {
 					struct iphdr *ipheader = NULL;
-					ipheader = (struct iphdr*)(skb->data);
+					ipheader = (struct iphdr *)(skb->data);
 					if (ipheader && ipheader->protocol == IPPROTO_ICMP) {
 						wcp->rx_icmp++;
 					}
@@ -979,24 +1010,26 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 				} else if (dump_data[0] & 0x01) { /* Multicast */
 					wcp->rx_mcast++;
 					if (ntoh16(skb->protocol) == ETHER_TYPE_IPV6) {
-					    wcp->rx_multi_ipv6++;
-					    if ((skb->len > ETHER_ICMP6_HEADER) &&
-					        (dump_data[ETHER_ICMP6_HEADER] == IPPROTO_ICMPV6)) {
-					        wcp->rx_icmpv6++;
-					        if (skb->len > ETHER_ICMPV6_TYPE) {
-					            switch (dump_data[ETHER_ICMPV6_TYPE]) {
-					            case NDISC_ROUTER_ADVERTISEMENT:
-					                wcp->rx_icmpv6_ra++;
-					                break;
-					            case NDISC_NEIGHBOUR_ADVERTISEMENT:
-					                wcp->rx_icmpv6_na++;
-					                break;
-					            case NDISC_NEIGHBOUR_SOLICITATION:
-					                wcp->rx_icmpv6_ns++;
-					                break;
-					            }
-					        }
-					    }
+						wcp->rx_multi_ipv6++;
+						if ((skb->len > ETHER_ICMP6_HEADER) &&
+							(dump_data[ETHER_ICMP6_HEADER] ==
+							IPPROTO_ICMPV6)) {
+							wcp->rx_icmpv6++;
+							if (skb->len > ETHER_ICMPV6_TYPE) {
+								switch (
+								dump_data[ETHER_ICMPV6_TYPE]) {
+								case NDISC_ROUTER_ADVERTISEMENT:
+									wcp->rx_icmpv6_ra++;
+									break;
+								case NDISC_NEIGHBOUR_ADVERTISEMENT:
+									wcp->rx_icmpv6_na++;
+									break;
+								case NDISC_NEIGHBOUR_SOLICITATION:
+									wcp->rx_icmpv6_ns++;
+									break;
+								}
+							}
+						}
 					} else if (dump_data[2] == 0x5E) {
 						wcp->rx_multi_ipv4++;
 					} else {
@@ -1143,8 +1176,7 @@ dhd_rxf_thread(void *data)
 	/* This thread doesn't need any user-level access,
 	 * so get rid of all our resources
 	 */
-	if (dhd_rxf_prio > 0)
-	{
+	if (dhd_rxf_prio > 0) {
 		struct sched_param param;
 		param.sched_priority = (dhd_rxf_prio < MAX_RT_PRIO)?dhd_rxf_prio:(MAX_RT_PRIO-1);
 		setScheduler(current, SCHED_FIFO, &param);
@@ -1255,9 +1287,107 @@ dhd_sched_rxf(dhd_pub_t *dhdp, void *skb)
 #endif /* RXF_DEQUEUE_ON_BUSY */
 }
 
+#define MIN_80211_PKTLEN	14u
+s32
+dhd_validate_monitor_packet_sanity(struct sk_buff *skb, dhd_pub_t *dhdp)
+{
+	u8 *pkt;
+	u16 len;
+	struct ieee80211_radiotap_header *radhdr;
+	u16 min_rad_hdr_len = sizeof(struct ieee80211_radiotap_header);
+#ifdef DHD_ART
+	struct ieee80211_hdr_3addr *mac_hdr;
+	u16 frame_ctl;
+	struct net_device *primary_ndev = dhd_linux_get_primary_netdev(dhdp);
+	struct bcm_cfg80211 *cfg = NULL;
+#endif /* DHD_ART */
+
+#ifdef DHD_ART
+	cfg = wl_get_cfg(primary_ndev);
+	if (!cfg) {
+		DHD_ERROR(("cfg is NULL\n"));
+		return BCME_ERROR;
+	}
+#endif /* DHD_ART */
+
+	if (skb == NULL) {
+		DHD_ERROR(("skb is NULL\n"));
+		return BCME_ERROR;
+	}
+
+	len = skb->len;
+	if (len < (min_rad_hdr_len)) {
+		DHD_MON_TRACE(("too less skb_len:%d\n", len));
+#ifdef DHD_ART
+		if (dhdp && skb->dev && (skb->dev->name[0] != '\0') &&
+			IS_ART_IFACE(skb->dev->name)) {
+			dhdp->art_counters.skb_len_too_less++;
+			dhdp->art_counters.rx_errors++;
+		}
+#endif /* DHD_ART */
+		return BCME_ERROR;
+	}
+
+	pkt = skb->data;
+	radhdr = (struct ieee80211_radiotap_header *)pkt;
+	if (len < (radhdr->it_len + MIN_80211_PKTLEN)) {
+		DHD_MON_TRACE(("too less skb_len:%d, radhdr->it_len:%d\n",
+			len, radhdr->it_len));
+#ifdef DHD_MON_DBG
+		prhex("radiotap_hdr", (u8 *)pkt, min_rad_hdr_len);
+#endif /* DHD_MON_DBG */
+#ifdef DHD_ART
+		if (dhdp && skb->dev && (skb->dev->name[0] != '\0') &&
+			IS_ART_IFACE(skb->dev->name)) {
+			dhdp->art_counters.rx_errors++;
+			dhdp->art_counters.skb_len_too_less++;
+		}
+#endif /* DHD_ART */
+		return BCME_ERROR;
+	}
+
+	if (dhdp->op_mode & DHD_FLAG_MONITOR_MODE) {
+		/* basic header sanity check is good enough */
+		return BCME_OK;
+	}
+
+#ifdef DHD_ART
+	DHD_MON_TRACE(("%s: Enter skb_data:%px skb_len:%d radtap_len:%d\n",
+			__FUNCTION__, skb->data, len, radhdr->it_len));
+	mac_hdr = (struct ieee80211_hdr_3addr *)(pkt + radhdr->it_len);
+	frame_ctl = le16_to_cpu(mac_hdr->frame_control);
+
+	if (ieee80211_is_ctl(frame_ctl)) {
+		DHD_MON_TRACE(("Control frame. allow it\n"));
+#ifdef DHD_MON_DBG
+		prhex("ctl_frame", (u8 *)mac_hdr,
+				MIN(MIN_80211_PKTLEN, (skb->len - radhdr->it_len)));
+#endif /* DHD_MON_DBG */
+		return BCME_OK;
+	}
+
+#ifdef DHD_MON_DBG
+	prhex("mac_hdr", (u8 *)mac_hdr, (u32)sizeof(struct ieee80211_hdr_3addr));
+#endif /* DHD_MON_DBG */
+	/* look for packets of interest by app space based on bssid */
+	if (memcmp(mac_hdr->addr3, cfg->art_bssid, ETH_ALEN) == 0) {
+		DHD_MON_TRACE(("bssid mached. allow packet skb->len:%d\n", len));
+		return BCME_OK;
+	}
+
+	/* unknown packets - drop */
+	DHD_MON_TRACE(("bssid mismatch. drop packet. skb->len:%d\n", len));
+	DHD_MON_TRACE(("mac_addr3:" MACF " art_bssid:" MACF "\n",
+		ETHERP_TO_MACF(mac_hdr->addr3), ETHERP_TO_MACF(cfg->art_bssid)));
+	return BCME_ERROR;
+#else
+	return BCME_OK;
+#endif /* DHD_ART */
+}
+
 #ifdef WL_MONITOR
 void
-dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
+dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t *msg, void *pkt, int ifidx)
 {
 	dhd_info_t *dhd = (dhd_info_t *)dhdp->info;
 #ifdef HOST_RADIOTAP_CONV
@@ -1269,7 +1399,8 @@ dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
 		memcpy(&pkt_info.ts, &msg->ts, sizeof(monitor_pkt_ts_t));
 
 		if (!dhd->monitor_skb) {
-			if ((dhd->monitor_skb = dev_alloc_skb(MAX_MON_PKT_SIZE)) == NULL)
+			dhd->monitor_skb = dev_alloc_skb(MAX_MON_PKT_SIZE);
+			if (dhd->monitor_skb == NULL)
 				return;
 		}
 
@@ -1281,6 +1412,10 @@ dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
 		else {
 			PKTFREE(dhdp->osh, pkt, FALSE);
 			dev_kfree_skb(dhd->monitor_skb);
+#ifdef DHD_ART
+			dhdp->art_counters.rx_no_monitor_dev_errors++;
+			dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
 			return;
 		}
 
@@ -1295,79 +1430,188 @@ dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
 
 		dhd->monitor_skb->protocol = eth_type_trans(dhd->monitor_skb,
 			dhd->monitor_skb->dev);
-	}
-	else
+	} else
 #endif /* HOST_RADIOTAP_CONV */
 	{
 		uint8 amsdu_flag = (msg->flags & BCMPCIE_PKT_FLAGS_MONITOR_MASK) >>
 			BCMPCIE_PKT_FLAGS_MONITOR_SHIFT;
 		switch (amsdu_flag) {
-			case BCMPCIE_PKT_FLAGS_MONITOR_NO_AMSDU:
-			default:
-				if (!dhd->monitor_skb) {
-					if ((dhd->monitor_skb = PKTTONATIVE(dhdp->osh, pkt))
-						== NULL)
-						return;
-				}
-				if (dhd->monitor_type[ifidx] && dhd->monitor_dev)
-					dhd->monitor_skb->dev = dhd->monitor_dev;
-				else {
-					PKTFREE(dhdp->osh, pkt, FALSE);
-					dhd->monitor_skb = NULL;
-					return;
-				}
-				dhd->monitor_skb->protocol =
-					eth_type_trans(dhd->monitor_skb, dhd->monitor_skb->dev);
+		case BCMPCIE_PKT_FLAGS_MONITOR_NO_AMSDU:
+		default:
+			DHD_MON_TRACE(("%s MONITOR RX NON-AMSDU\n", __FUNCTION__));
+			if (dhd->monitor_skb) {
+				DHD_MON_TRACE(("%s free monitor_skb for new pkt\n",
+						__FUNCTION__));
+				dev_kfree_skb(dhd->monitor_skb);
+				dhd->monitor_skb = NULL;
 				dhd->monitor_len = 0;
-				break;
+			}
 
-			case BCMPCIE_PKT_FLAGS_MONITOR_FIRST_PKT:
-				if (!dhd->monitor_skb) {
-					if ((dhd->monitor_skb = dev_alloc_skb(MAX_MON_PKT_SIZE))
-						== NULL)
-						return;
-					dhd->monitor_len = 0;
-				}
-				if (dhd->monitor_type[ifidx] && dhd->monitor_dev)
-					dhd->monitor_skb->dev = dhd->monitor_dev;
-				else {
-					PKTFREE(dhdp->osh, pkt, FALSE);
-					dev_kfree_skb(dhd->monitor_skb);
-					return;
-				}
-				memcpy(PKTDATA(dhdp->osh, dhd->monitor_skb),
-				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt));
-				dhd->monitor_len = PKTLEN(dhdp->osh, pkt);
-				PKTFREE(dhdp->osh, pkt, FALSE);
+			dhd->monitor_skb = PKTTONATIVE(dhdp->osh, pkt);
+			if (dhd->monitor_skb == NULL) {
 				return;
+			}
 
-			case BCMPCIE_PKT_FLAGS_MONITOR_INTER_PKT:
-				memcpy(PKTDATA(dhdp->osh, dhd->monitor_skb) + dhd->monitor_len,
-				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt));
-				dhd->monitor_len += PKTLEN(dhdp->osh, pkt);
+			if (dhd_validate_monitor_packet_sanity(dhd->monitor_skb, dhdp) != BCME_OK) {
+				DHD_MON_TRACE(("dropping the packet\n"));
 				PKTFREE(dhdp->osh, pkt, FALSE);
+				dhd->monitor_skb = NULL;
 				return;
+			}
 
-			case BCMPCIE_PKT_FLAGS_MONITOR_LAST_PKT:
-				memcpy(PKTDATA(dhdp->osh, dhd->monitor_skb) + dhd->monitor_len,
-				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt));
-				dhd->monitor_len += PKTLEN(dhdp->osh, pkt);
+			if (dhd->monitor_type[ifidx] && dhd->monitor_dev)
+				dhd->monitor_skb->dev = dhd->monitor_dev;
+			else {
 				PKTFREE(dhdp->osh, pkt, FALSE);
-				if (dhd->monitor_len < MAX_MON_PKT_SIZE) {
-					skb_put(dhd->monitor_skb, dhd->monitor_len);
-				} else {
-					DHD_ERROR(("dhd_rx_mon_pkt: Invalid packet length %d "
-						"exceeds the max skb length %d\n",
-						dhd->monitor_len, MAX_MON_PKT_SIZE));
-					dev_kfree_skb(dhd->monitor_skb);
-					dhd->monitor_skb = NULL;
-					dhd->monitor_len = 0;
-					return;
-				}
-				dhd->monitor_skb->protocol =
-					eth_type_trans(dhd->monitor_skb, dhd->monitor_skb->dev);
+				dhd->monitor_skb = NULL;
+#ifdef DHD_ART
+				dhdp->art_counters.rx_no_monitor_dev_errors++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+			dhd->monitor_skb->protocol =
+				eth_type_trans(dhd->monitor_skb, dhd->monitor_skb->dev);
+			dhd->monitor_len = 0;
+			break;
+
+		case BCMPCIE_PKT_FLAGS_MONITOR_FIRST_PKT:
+			DHD_MON_TRACE(("%s MONITOR RX FIRST PKT\n", __FUNCTION__));
+			if (dhd->monitor_skb) {
+				DHD_MON_TRACE(("%s free monitor_skb for new pkt\n",
+					__FUNCTION__));
+				dev_kfree_skb(dhd->monitor_skb);
+				dhd->monitor_skb = NULL;
 				dhd->monitor_len = 0;
-				break;
+			}
+
+			dhd->monitor_skb = dev_alloc_skb(MAX_MON_PKT_SIZE);
+			if (dhd->monitor_skb == NULL) {
+				return;
+			}
+			dhd->monitor_len = 0;
+
+			if (dhd->monitor_type[ifidx] && dhd->monitor_dev)
+				dhd->monitor_skb->dev = dhd->monitor_dev;
+			else {
+				PKTFREE(dhdp->osh, pkt, FALSE);
+				dev_kfree_skb(dhd->monitor_skb);
+#ifdef DHD_ART
+				dhdp->art_counters.rx_no_monitor_dev_errors++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+
+			if (memcpy_s(PKTDATA(dhdp->osh, dhd->monitor_skb),
+					MAX_MON_PKT_SIZE,
+				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt)) != BCME_OK) {
+				DHD_ERROR(("data copy failed. drop the packet. len:%d\n",
+					PKTLEN(dhdp->osh, pkt)));
+				dev_kfree_skb(dhd->monitor_skb);
+				PKTFREE(dhdp->osh, pkt, FALSE);
+				dhd->monitor_skb = NULL;
+				dhd->monitor_len = 0;
+#ifdef DHD_ART
+				dhdp->art_counters.rx_memcpy_errors++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+
+			dhd->monitor_len = PKTLEN(dhdp->osh, pkt);
+			PKTFREE(dhdp->osh, pkt, FALSE);
+			return;
+
+		case BCMPCIE_PKT_FLAGS_MONITOR_INTER_PKT:
+			DHD_MON_TRACE(("%s MONITOR RX INTER_PKT\n", __FUNCTION__));
+			if (dhd->monitor_len == 0) {
+				/* First packet dropped and hence no mem allocated. */
+				DHD_MON_TRACE(("%s: packet not found, drop payload\n",
+						__FUNCTION__));
+				PKTFREE(dhdp->osh, pkt, FALSE);
+#ifdef DHD_ART
+				dhdp->art_counters.rx_first_pkt_dropped++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+
+			if (memcpy_s(PKTDATA(dhdp->osh, dhd->monitor_skb) + dhd->monitor_len,
+					(MAX_MON_PKT_SIZE - dhd->monitor_len),
+				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt)) != BCME_OK) {
+				DHD_ERROR(("data copy failed. drop the packet. len:%d\n",
+					PKTLEN(dhdp->osh, pkt)));
+				dev_kfree_skb(dhd->monitor_skb);
+				PKTFREE(dhdp->osh, pkt, FALSE);
+				dhd->monitor_skb = NULL;
+				dhd->monitor_len = 0;
+#ifdef DHD_ART
+				dhdp->art_counters.rx_memcpy_errors++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+
+			dhd->monitor_len += PKTLEN(dhdp->osh, pkt);
+			PKTFREE(dhdp->osh, pkt, FALSE);
+			return;
+
+		case BCMPCIE_PKT_FLAGS_MONITOR_LAST_PKT:
+			DHD_MON_TRACE(("%s MONITOR RX LAST_PKT\n", __FUNCTION__));
+
+			if ((dhd->monitor_len == 0) || !(dhd->monitor_skb)) {
+				/* First/prev packet dropped and hence no mem allocated. */
+				DHD_MON_TRACE(("%s: packet not found, drop the payload\n",
+						__FUNCTION__));
+				PKTFREE(dhdp->osh, pkt, FALSE);
+#ifdef DHD_ART
+				dhdp->art_counters.rx_first_or_prev_pkt_dropped++;
+				dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
+				return;
+			}
+
+			if ((PKTLEN(dhdp->osh, pkt) + dhd->monitor_len) >= MAX_MON_PKT_SIZE) {
+				DHD_MON_TRACE(("dhd_rx_mon_pkt: Invalid packet length %d "
+					"exceeds the max skb length %d\n",
+					dhd->monitor_len, MAX_MON_PKT_SIZE));
+				dev_kfree_skb(dhd->monitor_skb);
+				PKTFREE(dhdp->osh, pkt, FALSE);
+				dhd->monitor_skb = NULL;
+				dhd->monitor_len = 0;
+				return;
+			}
+
+			if (memcpy_s(PKTDATA(dhdp->osh, dhd->monitor_skb) + dhd->monitor_len,
+					(MAX_MON_PKT_SIZE - dhd->monitor_len),
+				PKTDATA(dhdp->osh, pkt), PKTLEN(dhdp->osh, pkt)) != BCME_OK) {
+				DHD_ERROR(("last packet data copy failed. drop the packet\n"));
+				dev_kfree_skb(dhd->monitor_skb);
+				PKTFREE(dhdp->osh, pkt, FALSE);
+				dhd->monitor_skb = NULL;
+				dhd->monitor_len = 0;
+				return;
+			}
+
+			dhd->monitor_len += PKTLEN(dhdp->osh, pkt);
+			PKTFREE(dhdp->osh, pkt, FALSE);
+			if (dhd->monitor_len < MAX_MON_PKT_SIZE) {
+				skb_put(dhd->monitor_skb, dhd->monitor_len);
+			}
+
+			if (dhd_validate_monitor_packet_sanity(dhd->monitor_skb, dhdp) != BCME_OK) {
+				DHD_MON_TRACE(("dropping the packet\n"));
+				dev_kfree_skb(dhd->monitor_skb);
+				dhd->monitor_skb = NULL;
+				dhd->monitor_len = 0;
+				return;
+			}
+
+			dhd->monitor_skb->protocol =
+				eth_type_trans(dhd->monitor_skb, dhd->monitor_skb->dev);
+			dhd->monitor_len = 0;
+			break;
 		}
 	}
 
@@ -1375,19 +1619,30 @@ dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
 		struct sk_buff *skb2;
 
 		DHD_INFO(("%s: insufficient headroom\n",
-		          dhd_ifname(&dhd->pub, ifidx)));
+			dhd_ifname(&dhd->pub, ifidx)));
 
+#ifdef DHD_ART
+		dhdp->art_counters.rx_skb_headroom_lt_etherheader++;
+#endif /* DHD_ART */
 		skb2 = skb_realloc_headroom(dhd->monitor_skb, ETHER_HDR_LEN);
 
 		dev_kfree_skb(dhd->monitor_skb);
-		if ((dhd->monitor_skb = skb2) == NULL) {
+		dhd->monitor_skb = skb2;
+		if (dhd->monitor_skb == NULL) {
 			DHD_ERROR(("%s: skb_realloc_headroom failed\n",
-			           dhd_ifname(&dhd->pub, ifidx)));
+				dhd_ifname(&dhd->pub, ifidx)));
+#ifdef DHD_ART
+			dhdp->art_counters.rx_skb_realloc_headroom_errors++;
+			dhdp->art_counters.rx_errors++;
+#endif /* DHD_ART */
 			return;
 		}
 	}
 	PKTPUSH(dhd->pub.osh, dhd->monitor_skb, ETHER_HDR_LEN);
 
+#ifdef DHD_ART
+	dhdp->art_counters.rx_packets++;
+#endif /* DHD_ART */
 	/* WL here makes sure data is 4-byte aligned? */
 	if (in_interrupt()) {
 		bcm_object_trace_opr(skb, BCM_OBJDBG_REMOVE,
@@ -1402,7 +1657,6 @@ dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t* msg, void *pkt, int ifidx)
 		 */
 		bcm_object_trace_opr(dhd->monitor_skb, BCM_OBJDBG_REMOVE,
 			__FUNCTION__, __LINE__);
-
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
 		netif_rx(dhd->monitor_skb);
 #else
@@ -1549,7 +1803,7 @@ int net_os_wake_lock_rx_timeout_enable(struct net_device *dev, int val)
 void
 dhd_flush_rx_tx_wq(dhd_pub_t *dhdp)
 {
-	dhd_info_t * dhd;
+	dhd_info_t *dhd;
 
 	if (dhdp) {
 		dhd = dhdp->info;

@@ -2317,7 +2317,9 @@ static int p9221_get_property(struct power_supply *psy,
 	switch (prop) {
 	/* check for field */
 	case POWER_SUPPLY_PROP_PRESENT:
-		if ((atomic_read(&charger->dwell_defend_disabling_flag) == 1) &&
+		if (charger->ben_state) {
+			val->intval = 0;
+		} else if ((atomic_read(&charger->dwell_defend_disabling_flag) == 1) &&
 			(atomic_read(&charger->charger_present_flag) == 1)) {
 			val->intval = 1;
 		} else {

@@ -4,7 +4,7 @@
  * Provides type definitions and function prototypes used to link the
  * DHD OS, bus, and protocol modules.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -35,6 +35,7 @@
 #include <linux/init.h>
 #include <linux/firmware.h>
 #include <linux/kernel.h>
+#include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
@@ -44,7 +45,11 @@
 #include <linux/ethtool.h>
 #include <linux/proc_fs.h>
 #include <asm/uaccess.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#include <linux/unaligned.h>
+#else
 #include <asm/unaligned.h>
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0) */
 #include <linux/fs.h>
 #include <linux/namei.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
@@ -118,6 +123,12 @@ int get_scheduler_policy(struct task_struct *p);
 #ifdef DEBUG_DPC_THREAD_WATCHDOG
 #define MAX_RESCHED_CNT 600
 #endif /* DEBUG_DPC_THREAD_WATCHDOG */
+
+#if defined(__linux__)
+#define DHD_VIRT_ADDR_VALID(addr) virt_addr_valid(addr)
+#else
+#define DHD_VIRT_ADDR_VALID(addr) TRUE
+#endif /* __linux__ */
 
 #if defined(__linux__)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) && LINUX_VERSION_CODE < \
@@ -439,11 +450,17 @@ typedef enum download_type {
 #endif /* #if defined(NDIS) */
 
 /* For supporting multiple interfaces */
-#define DHD_MAX_IFS			16
-#define DHD_MAX_STATIC_IFS	1
-#define DHD_DEL_IF			-0xE
-#define DHD_BAD_IF			-0xF
-#define DHD_DUMMY_INFO_IF	0xDEAF	/* Hack i/f to handle events from INFO Ring */
+#define DHD_MAX_IFS                16u
+/* static interface exposed at network level on driver load,
+ * but till interface is initialised via ifconfig up, the fw
+ * interface will not be allocated.
+ */
+#define DHD_MAX_STATIC_IFS         3u
+#define DHD_INVALID_STATIC_IDX     0xFFu
+#define DHD_INVALID_IFIDX          0xFFu
+#define DHD_DEL_IF                 0xEu
+#define DHD_BAD_IF                 0xFEu
+#define DHD_DUMMY_INFO_IF          0xDEAFu	/* Hack i/f to handle events from INFO Ring */
 /* to avoid build error for NDIS for timebeing */
 #define DHD_EVENT_IF DHD_DUMMY_INFO_IF
 
@@ -466,7 +483,8 @@ enum dhd_op_flags {
 	DHD_FLAG_IBSS_MODE				= (1 << (8)),
 	DHD_FLAG_MFG_MODE				= (1 << (9)),
 	DHD_FLAG_RSDB_MODE				= (1 << (10)),
-	DHD_FLAG_MP2P_MODE				= (1 << (11))
+	DHD_FLAG_MP2P_MODE				= (1 << (11)),
+	DHD_FLAG_MONITOR_MODE				= (1 << (12))
 };
 #endif /* defined(__linux__) */
 
@@ -514,7 +532,7 @@ enum dhd_op_flags {
  * This also needs to be increased if NVRAM files size increases
  */
 #define MAX_NVRAMBUF_SIZE	(48 * 1024) /* max nvram buf size */
-#define MAX_CLM_BUF_SIZE	(64 * 1024) /* max clm blob size */
+#define MAX_CLM_BUF_SIZE	(128 * 1024) /* max clm blob size */
 #define MAX_TXCAP_BUF_SIZE	(16 * 1024) /* max txcap blob size */
 #ifdef DHD_DEBUG
 #define DHD_JOIN_MAX_TIME_DEFAULT 10000 /* ms: Max time out for joining AP */
@@ -641,14 +659,14 @@ enum dhd_dongledump_mode {
 	DUMP_MEMFILE_MAX	= 4
 };
 
-#if defined(DHD_FILE_DUMP_EVENT) && defined(DHD_FW_COREDUMP)
+#if (defined(DHD_FILE_DUMP_EVENT) || defined(DHD_DMPD)) && defined(DHD_FW_COREDUMP)
 typedef enum dhd_dongledump_status {
 	DUMP_READY		= 0,
 	DUMP_IN_PROGRESS	= 1,
 	DUMP_FAILURE		= 2,
 	DUMP_NOT_READY		= 3
 } dhd_dongledump_status_t;
-#endif /* DHD_FILE_DUMP_EVENT && DHD_FW_COREDUMP */
+#endif /* (DHD_FILE_DUMP_EVENT || DHD_DMPD) && DHD_FW_COREDUMP */
 
 enum dhd_dongledump_type {
 	DUMP_TYPE_CLEAR				= 0,
@@ -1001,6 +1019,15 @@ enum {
 	CMD_MAX
 };
 
+/* D2H timeout sub type */
+enum {
+	D2H_TIMEOUT_NONE = 0,
+	D2H_TIMEOUT_DMA_IDX_CACHE = 1,
+	D2H_TIMEOUT_DMA_IDX_CACHE_MSI = 2,
+	D2H_TIMEOUT_MSI = 3,
+	D2H_TIMEOUT_DPC_SCHED = 4
+};
+
 #define DHD_DUMP_SUBSTR_UNWANTED	"_unwanted"
 #define DHD_DUMP_SUBSTR_DISCONNECTED	"_disconnected"
 
@@ -1016,7 +1043,7 @@ enum {
 #define DHD_COMMON_DUMP_PATH	"/data/log/wifi/"
 #elif defined(CUSTOMER_HW2_DEBUG)
 #define DHD_COMMON_DUMP_PATH    PLATFORM_PATH
-#elif defined(BOARD_HIKEY) || defined (BOARD_STB)
+#elif defined(BOARD_HIKEY) || defined(BOARD_STB)
 #ifndef DHD_COMMON_DUMP_PATH
 #define DHD_COMMON_DUMP_PATH	"/data/misc/wifi/"
 #endif /* !DHD_COMMON_DUMP_PATH */
@@ -1029,7 +1056,7 @@ enum {
 #endif /* CUSTOMER_HW4 */
 #endif /* !DHD_COMMON_DUMP_PATH */
 
-#define DHD_MEMDUMP_LONGSTR_LEN 180
+#define DHD_MEMDUMP_LONGSTR_LEN 192u
 
 struct cntry_locales_custom {
 	char iso_abbrev[WLC_CNTRY_BUF_SZ];      /* ISO 3166-1 country abbreviation */
@@ -1130,6 +1157,9 @@ typedef enum {
 
 #ifdef BCMINTERNAL
 
+#ifdef DHD_FWTRACE
+typedef struct fwtrace_info fwtrace_info_t; /* forward declaration */
+#endif	/* DHD_FWTRACE */
 
 #endif	/* BCMINTERNAL */
 
@@ -1306,6 +1336,30 @@ typedef struct dhd_db7_info {
 	uint64	debug_max_db7_send_time;
 	uint64	debug_max_db7_trap_time;
 } dhd_db7_info_t;
+
+#ifdef DHD_ART
+#define IS_ART_IFACE(ifname) strstr(ifname, "radiotap0")
+typedef struct dhd_art_counters {
+    uint64 rx_packets;
+    uint64 rx_dbg_monitor_packets;
+    uint64 tx_packets;
+    uint64 ctrl_packets;
+    uint64 rx_no_monitor_dev_errors;
+    uint64 rx_skb_realloc_headroom_errors;
+    uint64 rx_skb_headroom_lt_etherheader;
+    uint64 rx_errors;
+    uint64 tx_errors;
+    uint64 tot_txcpl;
+    uint64 ctrl_errors;
+    uint64 rx_bssid_mismatch;
+    uint64 rx_first_pkt_dropped;
+    uint64 rx_first_or_prev_pkt_dropped;
+    uint64 rx_memcpy_errors;
+    uint64 skb_len_too_less;
+} dhd_art_counters_t;
+#else
+#define IS_ART_IFACE(ifname) FALSE
+#endif /* DHD_ART */
 
 /**
  * Common structure for module and instance linkage.
@@ -1573,9 +1627,7 @@ typedef struct dhd_pub {
 	uint32 arp_version;
 	bool hmac_updated;
 #endif
-#if defined(BCMSUP_4WAY_HANDSHAKE)
 	bool fw_4way_handshake;		/* Whether firmware will to do the 4way handshake. */
-#endif
 #ifdef BCMINTERNAL
 	bool loopback; /* 1- enable loopback of tx packets, 0 - disable */
 #endif /* BCMINTERNAL */
@@ -1674,11 +1726,13 @@ typedef struct dhd_pub {
 	uint8 *coredump_mem;
 	uint32 coredump_len;
 	uint32 uc_status;		/* PCIE Uncorrectable Error Status */
+	uint8 ewp_init_state;
 	char memdump_str[DHD_MEMDUMP_LONGSTR_LEN];
 #endif /* DHD_COREDUMP */
 #ifdef COEX_CPU
 	uint8 *coex_dump;
 	uint32 coex_dump_length;
+	uint32 coex_mem_length;
 #endif /* COEX_CPU */
 #ifdef DHD_RND_DEBUG
 	uint8 *rnd_buf;
@@ -1753,6 +1807,7 @@ typedef struct dhd_pub {
 #ifdef NDO_CONFIG_SUPPORT
 	bool ndo_enable;		/* ND offload feature enable */
 	bool ndo_host_ip_overflow;	/* # of host ip addr exceed FW capacity */
+	bool ndo_host_dongle_ip_err;	/* to report host and dongle mismatch only once */
 	uint32 ndo_max_host_ip;		/* # of host ip addr supported by FW */
 #endif /* NDO_CONFIG_SUPPORT */
 #if defined(DHD_LOG_DUMP)
@@ -1865,6 +1920,7 @@ typedef struct dhd_pub {
 #endif /* GDB_PROXY */
 	int debug_dump_subcmd;
 	uint64 debug_dump_time_sec;
+	int d2h_timeout_subtype;
 	bool hscb_enable;
 
 	uint64 logset_prsrv_mask;
@@ -1942,6 +1998,9 @@ typedef struct dhd_pub {
 #endif /* DHD_DUMP_MNGR */
 #ifdef BCMINTERNAL
 
+#ifdef DHD_FWTRACE
+	fwtrace_info_t *fwtrace_info; /* f/w trace information */
+#endif	/* DHD_FWTRACE */
 
 #endif	/* BCMINTERNAL */
 	bool event_log_max_sets_queried;
@@ -1996,6 +2055,7 @@ typedef struct dhd_pub {
 		wl_roam_stats_v1_t v1;
 	} roam_evt;
 	bool ring_attached;
+	atomic_t edl_attached;
 #ifdef DHD_PCIE_RUNTIMEPM
 #ifdef RPM_FAST_TRIGGER
 	bool rpm_fast_trigger;
@@ -2029,6 +2089,14 @@ typedef struct dhd_pub {
 	uint64 lb_rxp_napi_complete_cnt;
 	uint64 rx_dma_stall_hc_ignore_cnt;
 #endif /* DHD_LB_STATS */
+#ifdef DHD_ART
+	bool host_art_enabled;
+	bool dongle_art_enabled;
+	bool usr_art_enabled;
+#endif /* DHD_ART */
+#ifdef DHD_LPCAP
+	bool lpcap_active;
+#endif /* DHD_LPCAP */
 #ifdef TX_CSO
 	bool dongle_txcso_enabled;
 	bool host_txcso_enabled;
@@ -2055,7 +2123,11 @@ typedef struct dhd_pub {
 #ifdef WL_CFGVENDOR_SEND_ALERT_EVENT
 	uint32 alert_reason;		/* reason codes for alert event */
 #endif /* WL_CFGVENDOR_SEND_ALERT_EVENT */
-
+#ifdef BOARD_STB_ASTRA
+	struct task_struct *hostwake_gpio_poll_task;
+#endif /* BOARD_STB_ASTRA */
+	/* Do not toggle wlan regulator during init */
+	bool reg_on_through_init;
 	bool fw_mode_changed;
 	bool do_chip_bighammer;
 	uint chip_bighammer_count;
@@ -2112,9 +2184,32 @@ typedef struct dhd_pub {
 #ifdef DHD_TREAT_D3ACKTO_AS_LINKDWN
 	bool no_pcie_access_during_dump;
 #endif /* DHD_TREAT_D3ACKTO_AS_LINKDWN */
+#ifdef DHD_SSSR_DUMP
 	uint *sssr_srcb_buf_after;
+	uint *sssr_cmn_buf_after;
+#endif /* DHD_SSSR_DUMP */
+#ifdef DHD_VALIDATE_PKT_ADDRESS
+	uint badaddr_pkt_cnt;
+#endif /* DHD_VALIDATE_PKT_ADDRESS */
+	uint16 ctrlcpl_sysmem_rd;
+	uint16 ctrlcpl_sysmem_wr;
+	uint16 ctrlcpl_dmaidx_rd;
+	uint16 ctrlcpl_dmaidx_wr;
+	uint32 armpc;
+	uint32 arm_assert_phy_addr;
+	uint64 rx_hc_rts_cts_noucast;
+	bool usr_trig_dmp;
+	bool force_wl_reg_off;
+	bool reset_5g_rffe_vio;
+#ifdef DHD_ART
+	dhd_art_counters_t art_counters;
+#endif /* DHD_ART */
 } dhd_pub_t;
 
+#ifdef DHD_ART
+bool dhd_is_art_iface(dhd_pub_t *dhdp, int ifidx);
+#endif /* DHD_ART */
+bool dhd_is_art_skb(struct sk_buff *skb);
 #if defined(__linux__)
 int dhd_wifi_platform_set_power(dhd_pub_t *pub, bool on);
 #else
@@ -2151,14 +2246,22 @@ typedef struct {
 
 #if defined(PCIE_FULL_DONGLE)
 /*
+ * Packet Tag for PCIE Full Dongle DHD
+ *
  * WARNING: dhd_wlfc.h also defines a dhd_pkttag_t
  * making wlfc incompatible with PCIE_FULL DONGLE
+ *
+ * In tx path dhd_tx_lb_pkttag_fr also used the same skb
+ * contorl buffer. Make sure the struct members of
+ * dhd_tx_lb_pkttag_fr and dhd_pkttag_fd match from the top.
  */
 
-/* Packet Tag for PCIE Full Dongle DHD */
 typedef struct dhd_pkttag_fd {
 	uint16    flowid;   /* Flowring Id */
 	uint16    ifid;
+#ifdef GOOGLE_DAL_CORE
+	uint8     forward;  /* Indicate forwarding packet */
+#endif /* GOOGLE_DAL_CORE */
 #ifdef DHD_SBN
 	uint8	  pkt_udr;
 	uint8	  pad;
@@ -2183,6 +2286,12 @@ typedef struct dhd_pkttag_fd {
 #define DHD_PKT_GET_FLOWID(pkt)     ((DHD_PKTTAG_FD(pkt))->flowid)
 #define DHD_PKT_SET_FLOWID(pkt, pkt_flowid) \
 	(DHD_PKTTAG_FD(pkt)->flowid = (uint16)(pkt_flowid))
+
+#ifdef GOOGLE_DAL_CORE
+#define DHD_PKT_GET_FORWARD(pkt)    ((DHD_PKTTAG_FD(pkt))->forward)
+#define DHD_PKT_SET_FORWARD(pkt, value) \
+	(DHD_PKTTAG_FD(pkt)->forward = (value))
+#endif /* GOOGLE_DAL_CORE */
 
 #define DHD_PKT_GET_DATAOFF(pkt)    ((DHD_PKTTAG_FD(pkt))->dataoff)
 #define DHD_PKT_SET_DATAOFF(pkt, pkt_dataoff) \
@@ -2304,6 +2413,8 @@ extern void dhd_txfl_wake_lock_timeout(dhd_pub_t *pub, int val);
 extern void dhd_txfl_wake_unlock(dhd_pub_t *pub);
 extern void dhd_nan_wake_lock_timeout(dhd_pub_t *pub, int val);
 extern void dhd_nan_wake_unlock(dhd_pub_t *pub);
+extern void dhd_art_wake_lock(dhd_pub_t *pub);
+extern void dhd_art_wake_unlock(dhd_pub_t *pub);
 extern int dhd_os_wake_lock_timeout(dhd_pub_t *pub);
 extern int dhd_os_wake_lock_rx_timeout_enable(dhd_pub_t *pub, int val);
 extern int dhd_os_wake_lock_ctrl_timeout_enable(dhd_pub_t *pub, int val);
@@ -2399,6 +2510,18 @@ static inline void MUTEX_UNLOCK_SOFTAP_SET(dhd_pub_t *dhdp)
 			__FUNCTION__, __LINE__); \
 		dhd_nan_wake_unlock(pub); \
 	} while (0)
+#define DHD_ART_WAKE_LOCK(pub) \
+	do { \
+		printf("call ART wake_lock: %s %d\n", \
+			__FUNCTION__, __LINE__); \
+		dhd_art_wake_lock(pub); \
+	} while (0)
+#define DHD_ARTT_WAKE_UNLOCK(pub) \
+	do { \
+		printf("call ART wake_unlock: %s %d\n", \
+			__FUNCTION__, __LINE__); \
+		dhd_art_wake_unlock(pub); \
+	} while (0)
 #define DHD_OS_WAKE_LOCK_TIMEOUT(pub) \
 	do { \
 		printf("call wake_lock_timeout: %s %d\n", \
@@ -2459,6 +2582,8 @@ static inline void MUTEX_UNLOCK_SOFTAP_SET(dhd_pub_t *dhdp)
 #define DHD_NAN_WAKE_LOCK_TIMEOUT(pub, val)	dhd_nan_wake_lock_timeout(pub, val)
 #define DHD_NAN_WAKE_UNLOCK(pub)		dhd_nan_wake_unlock(pub)
 #define DHD_OS_WAKE_LOCK_TIMEOUT(pub)		dhd_os_wake_lock_timeout(pub)
+#define DHD_ART_WAKE_LOCK(pub)			dhd_art_wake_lock(pub)
+#define DHD_ART_WAKE_UNLOCK(pub)		dhd_art_wake_unlock(pub)
 #define DHD_OS_WAKE_LOCK_RX_TIMEOUT_ENABLE(pub, val) \
 	dhd_os_wake_lock_rx_timeout_enable(pub, val)
 #define DHD_OS_WAKE_LOCK_CTRL_TIMEOUT_ENABLE(pub, val) \
@@ -2648,8 +2773,9 @@ extern int dhd_attach_net(dhd_pub_t *dhdp, bool need_rtnl_lock);
 extern int dhd_attach_p2p(dhd_pub_t *);
 extern int dhd_detach_p2p(dhd_pub_t *);
 #endif /* WLP2P && WL_CFG80211 */
-extern int dhd_register_if(dhd_pub_t *dhdp, int idx, bool need_rtnl_lock);
-
+extern int dhd_register_if(dhd_pub_t *dhdp, int ifidx, bool need_rtnl_lock);
+extern int dhd_register_static_if(dhd_pub_t *dhdp, struct net_device *ndev, bool need_rtnl_lock);
+extern int dhd_remove_static_if(dhd_pub_t *dhdpub, struct net_device *ndev, bool need_rtnl_lock);
 /* Indication from bus module regarding removal/absence of dongle */
 extern void dhd_detach(dhd_pub_t *dhdp);
 extern void dhd_free(dhd_pub_t *dhdp);
@@ -2753,6 +2879,7 @@ extern void dhd_bus_wakeup_work(dhd_pub_t *dhdp);
 #define WIFI_FEATURE_SET_VOIP_MODE                   0x1000000000
 /* Support cached scan result report */
 #define WIFI_FEATURE_CACHED_SCAN_RESULTS             0x2000000000
+
 /* Invalid Feature */
 #define WIFI_FEATURE_INVALID                         0xFFFFFFFF
 
@@ -3153,6 +3280,8 @@ extern int dhd_event_ifchange(struct dhd_info *dhd, struct wl_event_data_if *ife
        char *name, uint8 *mac);
 extern struct net_device *dhd_allocate_if(dhd_pub_t *dhdpub, int ifidx, const char *name,
 	uint8 *mac, uint8 bssidx, bool need_rtnl_lock, const char *dngl_name);
+extern struct net_device *dhd_allocate_static_if(dhd_pub_t *dhdpub, const char *name,
+	uint8 *mac, bool need_rtnl_lock, const char *dngl_name);
 extern int dhd_remove_if(dhd_pub_t *dhdpub, int ifidx, bool need_rtnl_lock);
 #ifdef WL_STATIC_IF
 extern s32 dhd_update_iflist_info(dhd_pub_t *dhdp, struct net_device *ndev, int ifidx,
@@ -3394,10 +3523,10 @@ static INLINE int dhd_set_ap_isolate(dhd_pub_t *dhdp, uint32 idx, int val) { ret
 static INLINE int dhd_bssidx2idx(dhd_pub_t *dhdp, uint32 bssidx) { return 0; }
 #endif /* __linux__ */
 
-#if defined(DHD_FILE_DUMP_EVENT) && defined(DHD_FW_COREDUMP)
+#if (defined(DHD_FILE_DUMP_EVENT) || defined(DHD_DMPD)) && defined(DHD_FW_COREDUMP)
 dhd_dongledump_status_t dhd_get_dump_status(dhd_pub_t *pub);
 void dhd_set_dump_status(dhd_pub_t *pub, dhd_dongledump_status_t status);
-#endif /* DHD_FILE_DUMP_EVENT && DHD_FW_COREDUMP */
+#endif /* (DHD_FILE_DUMP_EVENT || DHD_DMPD) && DHD_FW_COREDUMP */
 
 extern bool dhd_is_concurrent_mode(dhd_pub_t *dhd);
 int dhd_iovar(dhd_pub_t *pub, int ifidx, char *name, char *param_buf, uint param_len,
@@ -3429,6 +3558,13 @@ extern int wl_iw_send_priv_event(struct net_device *dev, char *flag);
 #ifdef DHD_PCIE_NATIVE_RUNTIMEPM
 extern void dhd_flush_rx_tx_wq(dhd_pub_t *dhdp);
 #endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
+
+#ifdef __linux__
+bool dhd_check_del_in_progress(dhd_pub_t *dhdp, uint8 ifindex);
+#else
+static INLINE bool dhd_check_del_in_progress(dhd_pub_t *dhdp, uint8 ifindex)
+{ return FALSE; }
+#endif
 
 /*
  * Insmod parameters for debug/test
@@ -3867,8 +4003,10 @@ extern void dhd_wait_for_event(dhd_pub_t *dhd, bool *lockvar);
 extern void dhd_wait_event_wakeup(dhd_pub_t *dhd);
 
 #define IFLOCK_INIT(lock)       (*lock = 0)
-#define IFLOCK(lock)    while (InterlockedCompareExchange((lock), 1, 0))	\
-	NdisStallExecution(1);
+#define IFLOCK(lock) do { \
+	while (InterlockedCompareExchange((lock), 1, 0)) \
+	NdisStallExecution(1); \
+	} while (0);
 #define IFUNLOCK(lock)  InterlockedExchange((lock), 0)
 #define IFLOCK_FREE(lock)
 #define FW_SUPPORTED(dhd, capa) ((strstr(dhd->fw_capabilities, " " #capa " ") != NULL))
@@ -4961,6 +5099,12 @@ int dhd_ether_to_8023_hdr(osl_t *osh, struct ether_header *eh, void *p);
 int dhd_8023_llc_to_ether_hdr(osl_t *osh, struct ether_header *eh8023, void *p);
 #endif
 
+int dhd_ether_to_generic_llc_hdr(struct dhd_pub *dhd, uint8 ifidx,
+	struct ether_header *eh, void *p);
+int dhd_generic_llc_to_eth_hdr(struct dhd_pub *dhd, uint8 ifidx, struct ether_header *eh, void *p);
+bool dhd_llc_hdr_insert_enabled(struct dhd_pub *dhd, uint8 ifidx);
+void dhd_update_ifp_headroom_len(struct dhd_pub *dhdp, struct dhd_if *ifp);
+
 #ifdef CUSTOMER_HW4_DEBUG
 bool dhd_validate_chipid(dhd_pub_t *dhdp);
 #endif /* CUSTOMER_HW4_DEBUG */
@@ -5115,7 +5259,7 @@ void dhd_dump_wake_status(dhd_pub_t *dhdp, wake_counts_t *wcp, struct ether_head
 void dhd_ota_buf_clean(dhd_pub_t *dhdp);
 #endif /* SUPPORT_OTA_UPDATE */
 
-#if defined(DHD_DEBUGABILITY_LOG_DUMP_RING) || defined (DHD_DEBUGABILITY_EVENT_RING)
+#if defined(DHD_DEBUGABILITY_LOG_DUMP_RING) || defined(DHD_DEBUGABILITY_EVENT_RING)
 #ifndef DEBUGABILITY
 #error "DHD_DEBUGABILITY_LOG_DUMP_RING or DHD_DEBUGABILITY_EVENT_RING without DEBUGABILITY"
 #endif /* DEBUGABILITY */
@@ -5195,4 +5339,14 @@ int dhd_bt_fw_dwnld_blob(void *wl_hdl, char *buf, size_t len);
 extern void dhd_etb_dump_deinit(dhd_pub_t *dhd);
 #endif /* DHD_SDTC_ETB_DUMP */
 int write_dump_to_file(dhd_pub_t *dhd, uint8 *buf, int size, char *fname);
+#ifdef SHOW_LOGTRACE
+int dhd_reinit_logtrace_process(void *dhd_info);
+#endif /* SHOW_LOGTRACE */
+struct net_device *dhd_get_monitor_ndev(dhd_pub_t *dhd);
+void dhd_set_monitor_chspec(dhd_pub_t *dhdp, chanspec_t chspec);
+chanspec_t dhd_get_monitor_chspec(dhd_pub_t *dhdp);
+#ifdef DHD_VALIDATE_PKT_ADDRESS
+extern void *dhd_validate_packet_address(dhd_pub_t *dhd, void *pkt);
+extern void dhd_enqueue_inv_address_queue(struct dhd_pub *dhdp, void *pkt);
+#endif /* DHD_VALIDATE_PKT_ADDRESS */
 #endif /* _dhd_h_ */

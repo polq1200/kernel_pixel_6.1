@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="aosp" fetch="https://android.googlesource.com/"/>
-  <default revision="android-gs-caimito-6.1-android16-qpr3-beta" remote="aosp" sync-j="4"/>
+  <default revision="android-gs-caimito-6.1-android16-qpr3" remote="aosp" sync-j="4"/>
   <project path="common/ack" name="kernel/common" groups="partner">
     <linkfile dest="common/build.config.constants" src="build.config.constants"/>
     <linkfile dest="common/modules.bzl" src="modules.bzl"/>
@@ -74,6 +74,10 @@
     <linkfile dest="build_tegu.sh" src="build_tegu.sh"/>
     <linkfile dest=".d9.bazelrc" src="device.bazelrc"/>
   </project>
+  <project path="private/devices/google/stallion" name="kernel/devices/google/stallion" groups="partner,stallion">
+    <linkfile dest="build_stallion.sh" src="build_stallion.sh"/>
+    <linkfile dest=".d16.bazelrc" src="device.bazelrc"/>
+  </project>
   <project path="private/google-modules/amplifiers" name="kernel/google-modules/amplifiers" groups="partner"/>
   <project path="private/google-modules/aoc" name="kernel/google-modules/aoc" groups="partner"/>
   <project path="private/google-modules/aoc_ipc" name="kernel/google-modules/aoc-ipc" groups="partner"/>
@@ -84,6 +88,7 @@
   <project path="private/google-modules/display/common" name="kernel/google-modules/display/common" groups="partner"/>
   <project path="private/google-modules/display/panels/caimito" name="kernel/google-modules/display/panels/caimito" groups="partner"/>
   <project path="private/google-modules/display/panels/tegu" name="kernel/google-modules/display/panels/tegu" groups="partner"/>
+  <project path="private/google-modules/display/panels/stallion" name="kernel/google-modules/display/panels/stallion" groups="partner"/>
   <project path="private/google-modules/edgetpu/abrolhos" name="kernel/google-modules/edgetpu/abrolhos" groups="partner"/>
   <project path="private/google-modules/edgetpu/janeiro" name="kernel/google-modules/edgetpu/janeiro" groups="partner"/>
   <project path="private/google-modules/edgetpu/rio" name="kernel/google-modules/edgetpu/rio" groups="partner"/>

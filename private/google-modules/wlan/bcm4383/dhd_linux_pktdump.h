@@ -1,7 +1,7 @@
 /*
  * Header file for the Packet dump helper functions
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -72,9 +72,11 @@ extern void dhd_send_supp_eap(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata, uint32
 	bool tx, uint16 *pktfate);
 #else
 static INLINE void dhd_send_supp_dhcp(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata,
-	bool tx, uint16 *pktfate) {}
+	bool tx, uint16 *pktfate)
+{ }
 static INLINE void dhd_send_supp_eap(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata,
-	uint32 pktlen, bool tx, uint16 *pktfate) {}
+	uint32 pktlen, bool tx, uint16 *pktfate)
+{ }
 #endif /* WL_CFGVENDOR_CUST_ADVLOG */
 
 extern msg_eapol_t dhd_is_4way_msg(uint8 *pktdata);
@@ -85,11 +87,16 @@ extern void dhd_dump_pkt_deinit(dhd_pub_t *dhdp);
 extern void dhd_dump_pkt_clear(dhd_pub_t *dhdp);
 extern void dhd_dump_pktcnt_stats(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf);
 #else
-static INLINE void dhd_dump_mod_pkt_timer(dhd_pub_t *dhdp, uint16 rsn) { }
-static INLINE void dhd_dump_pkt_init(dhd_pub_t *dhdp) { }
-static INLINE void dhd_dump_pkt_deinit(dhd_pub_t *dhdp) { }
-static INLINE void dhd_dump_pkt_clear(dhd_pub_t *dhdp) { }
-static INLINE void dhd_dump_pktcnt_stats(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf) { }
+static INLINE void dhd_dump_mod_pkt_timer(dhd_pub_t *dhdp, uint16 rsn)
+{ }
+static INLINE void dhd_dump_pkt_init(dhd_pub_t *dhdp)
+{ }
+static INLINE void dhd_dump_pkt_deinit(dhd_pub_t *dhdp)
+{ }
+static INLINE void dhd_dump_pkt_clear(dhd_pub_t *dhdp)
+{ }
+static INLINE void dhd_dump_pktcnt_stats(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf)
+{ }
 #endif /* DHD_PKTDUMP_ROAM */
 
 /* Rx packet dump */
@@ -98,7 +105,8 @@ extern void dhd_rx_pkt_dump(dhd_pub_t *dhdp, int ifidx,
 	uint8 *pktdata, uint32 pktlen);
 #else
 static INLINE void dhd_rx_pkt_dump(dhd_pub_t *dhdp, int ifidx,
-	uint8 *pktdata, uint32 pktlen) { }
+	uint8 *pktdata, uint32 pktlen)
+{ }
 #endif /* DHD_RX_DUMP */
 
 /* DHCP packet dump */
@@ -107,7 +115,8 @@ extern void dhd_dhcp_dump(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata, bool tx,
 	uint32 *pkthash, uint16 *pktfate);
 #else
 static INLINE void dhd_dhcp_dump(dhd_pub_t *dhdp, int ifidx,
-	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate) { }
+	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate)
+{ }
 #endif /* DHD_DHCP_DUMP */
 
 /* DNS packet dump */
@@ -116,7 +125,8 @@ extern void dhd_dns_dump(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata, bool tx,
 	uint32 *pkthash, uint16 *pktfate);
 #else
 static INLINE void dhd_dns_dump(dhd_pub_t *dhdp, int ifidx,
-	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate) { }
+	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate)
+{ }
 #endif /* DHD_DNS_DUMP */
 
 /* ICMP packet dump */
@@ -125,7 +135,8 @@ extern void dhd_icmp_dump(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata, bool tx,
 	uint32 *pkthash, uint16 *pktfate);
 #else
 static INLINE void dhd_icmp_dump(dhd_pub_t *dhdp, int ifidx,
-	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate) { }
+	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate)
+{ }
 #endif /* DHD_ICMP_DUMP */
 
 /* ARP packet dump */
@@ -134,16 +145,18 @@ extern void dhd_arp_dump(dhd_pub_t *dhdp, int ifidx, uint8 *pktdata, bool tx,
 	uint32 *pkthash, uint16 *pktfate);
 #else
 static INLINE void dhd_arp_dump(dhd_pub_t *dhdp, int ifidx,
-	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate) { }
+	uint8 *pktdata, bool tx, uint32 *pkthash, uint16 *pktfate)
+{ }
 #endif /* DHD_ARP_DUMP */
 
 /* 802.1X packet dump */
 #ifdef DHD_8021X_DUMP
 extern void dhd_dump_eapol_message(dhd_pub_t *dhd, int ifidx,
-        uint8 *pktdata, uint32 pktlen, bool tx, uint32 *pkthash, uint16 *pktfate);
+	uint8 *pktdata, uint32 pktlen, bool tx, uint32 *pkthash, uint16 *pktfate);
 #else
 static INLINE void dhd_dump_eapol_message(dhd_pub_t *dhd, int ifidx,
-        uint8 *pktdata, uint32 pktlen, bool tx, uint32 *pkthash, uint16 *pktfate) { }
+	uint8 *pktdata, uint32 pktlen, bool tx, uint32 *pkthash, uint16 *pktfate)
+{ }
 #endif /* DHD_8021X_DUMP */
 extern bool dhd_check_ip_prot(uint8 *pktdata, uint16 ether_type);
 extern bool dhd_check_arp(uint8 *pktdata, uint16 ether_type);
