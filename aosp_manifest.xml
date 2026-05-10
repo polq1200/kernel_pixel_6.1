@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="aosp" fetch="https://android.googlesource.com/"/>
-  <default revision="android-gs-caimito-6.1-android17-beta" remote="aosp" sync-c="true" sync-j="32"/>
+  <default revision="android-gs-caimito-6.1-android17-qpr1-beta" remote="aosp" sync-c="true" sync-j="32"/>
   <project path="common/ack" name="kernel/common" groups="partner">
     <linkfile dest="common/build.config.constants" src="build.config.constants"/>
     <linkfile dest="common/modules.bzl" src="modules.bzl"/>
@@ -15,6 +15,8 @@
     <linkfile dest="common/BUILD.bazel" src="workspace/common.BUILD.bazel"/>
     <linkfile dest="private/.clang-format" src="workspace/private.clang-format"/>
     <linkfile dest="tools/bazel" src="tools/bazel.sh"/>
+    <linkfile dest="tools/build_dist.sh" src="tools/build_dist.sh"/>
+    <linkfile dest="tools/build_compile_commands.sh" src="tools/build_compile_commands.sh"/>
     <linkfile dest="update_symbol_list.sh" src="update_symbol_list.sh"/>
   </project>
   <project path="private/devices/google/gs101" name="kernel/devices/google/gs101" groups="partner">

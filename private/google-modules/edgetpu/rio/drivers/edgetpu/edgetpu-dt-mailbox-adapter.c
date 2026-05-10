@@ -164,7 +164,7 @@ void __iomem *edgetpu_mailbox_get_ext_csr_base(struct edgetpu_dev *etdev, uint i
 
 	/*
 	 * If dedicated mailboxes are in the device-tree, then etdev->regs starts at the external
-	 * mailboxes, rather than the KCI mailbox, and etdev->regs_offset_from_top is set to that
+	 * mailboxes, rather than the TPU TOP, and etdev->regs_offset_from_top is set to that
 	 * offset.
 	 */
 	return etdev->regs.mem - etdev->regs_offset_from_top +

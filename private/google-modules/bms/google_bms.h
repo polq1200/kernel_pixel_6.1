@@ -1058,7 +1058,6 @@ enum spoof_soc_reason {
 	SPOOF_SOC_CHARGING_POLICY,
 	SPOOF_SOC_ADAPTIVE_CHARGING,
 	SPOOF_SOC_TEMP_DEFEND,
-	SPOOF_SOC_DWELL_DEFEND,
 };
 
 enum bpst_batt_status {

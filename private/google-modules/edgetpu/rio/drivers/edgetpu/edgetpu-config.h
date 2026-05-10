@@ -8,6 +8,7 @@
 #ifndef __EDGETPU_CONFIG_H__
 #define __EDGETPU_CONFIG_H__
 
+
 #if IS_ENABLED(CONFIG_RIO)
 
 #include "rio/config.h"
@@ -35,8 +36,12 @@
 #endif
 
 #ifndef EDGETPU_HAS_GSA
+#if IS_ENABLED(CONFIG_GSA) || IS_ENABLED(CONFIG_EDGETPU_TEST)
 #define EDGETPU_HAS_GSA 1
+#else
+#define EDGETPU_HAS_GSA 0
 #endif
+#endif /* !defined(EDGETPU_HAS_GSA) */
 
 #ifndef EDGETPU_ALLOW_NONSECURE_FW
 #define EDGETPU_ALLOW_NONSECURE_FW 0

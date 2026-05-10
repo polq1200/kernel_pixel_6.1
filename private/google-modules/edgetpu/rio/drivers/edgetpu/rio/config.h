@@ -40,6 +40,9 @@
 
 #define EDGETPU_MMU_GRANULARITY_IS_PAGE 0
 
+/* Rio platforms only support GSA enabled, cannot check CONFIG_GSA on 6.1 */
+#define EDGETPU_HAS_GSA 1
+
 #include "config-csrs.h"
 #include "config-mailbox.h"
 #include "config-pwr-state.h"

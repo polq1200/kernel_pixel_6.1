@@ -2332,6 +2332,15 @@ static void max77779_fg_stuck_monitor_work(struct work_struct *work)
 	u16 data;
 	int ret;
 
+	/* Bypass monitor if model hasn't been loaded */
+	mutex_lock(&chip->model_lock);
+	if (!chip->model_ok) {
+		mutex_unlock(&chip->model_lock);
+		dev_info(chip->dev, "model not ok, bypassing stuck monitor\n");
+		goto done;
+	}
+	mutex_unlock(&chip->model_lock);
+
 	/* check timer changed */
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_Timer, &data);
 	if (ret < 0)

@@ -617,10 +617,8 @@ static int __maybe_unused edgetpu_pm_suspend(struct device *dev)
 		else
 			etdev_warn_ratelimited(
 				etdev,
-				"client %s pid %d tgid %d limited_pid %d limited_tgid %d count %d\n",
-				lc->client->name, lc->client->pid, lc->client->tgid,
-				lc->client->limited_pid, lc->client->limited_tgid,
-				lc->client->wakelock.req_count);
+				"client %s tgid %d count %d\n",
+				lc->client->name, lc->client->tgid, lc->client->wakelock.req_count);
 	}
 	mutex_unlock(&etdev->clients_lock);
 	return -EAGAIN;

@@ -66,6 +66,122 @@ enum wondertap_rate_bw {
 	WONDERTAP_RATE_BW_80 = 2,
 	WONDERTAP_RATE_BW_160 = 3,
 	WONDERTAP_RATE_BW_320 = 4,
+	WONDERTAP_RATE_BW_NONE = 0xff,
+};
+
+/** @brief Defines the role in the channel hopping list. */
+enum wondertap_role {
+	WONDERTAP_ROLE_NOP,
+	WONDERTAP_ROLE_STA,
+	WONDERTAP_ROLE_MAX,
+};
+
+/** @brief Represents a single entry of parameters in the channel hopping schedule. */
+struct wondertap_channel_list_params {
+	u32 freq;
+	enum wondertap_rate_bw bandwidth;
+	enum wondertap_role role;
+};
+
+/**
+ * @brief Parameters for scheduling channel switches.
+ */
+struct channel_schedule_request {
+	/**
+	 * @brief Length of channel in the list.
+	 */
+	u8 channel_list_len;
+	u8 reserved1[3];
+
+	/**
+	 * @brief Index of the next channel in the list to visit.
+	 */
+	u32 next_channel_index;
+
+	/**
+	 * @brief Time to stay on each channel in Time Units (TU).
+	 */
+	u32 dwell_time_tu;
+
+	/**
+	 * @brief Target switch time in TSF.
+	 */
+	u32 target_switch_time_tsf;
+
+	/**
+	 * @brief List of channel parameters to visit.
+	 */
+	struct wondertap_channel_list_params *channel_list;
+};
+
+/**
+ * @brief Represents the status and statistics of a visited channel.
+ */
+struct wondertap_channel_status {
+	/**
+	 * @brief Target switch time TSF of this channel switch.
+	 */
+	u32 channel_switch_tsf;
+
+	/**
+	 * @brief Channel frequency in MHz.
+	 */
+	u32 freq;
+
+	/**
+	 * @brief TSF timestamp when the channel was actually switched to and started operating.
+	 */
+	u32 channel_start_tsf;
+
+	/**
+	 * @brief TSF timestamp when the channel operation ended.
+	 */
+	u32 channel_end_tsf;
+
+	/**
+	 * @brief Number of TX frames transmitted on this channel.
+	 */
+	u32 tx_frames;
+
+	/**
+	 * @brief Number of TX bytes transmitted on this channel.
+	 */
+	u64 tx_bytes;
+
+	/**
+	 * @brief Number of RX frames received on this channel.
+	 */
+	u32 rx_frames;
+
+	/**
+	 * @brief Number of RX bytes received on this channel.
+	 */
+	u64 rx_bytes;
+};
+
+/**
+ * @brief Parameters for channel status report.
+ */
+struct wondertap_channel_status_report {
+	/**
+	 * @brief TSF timestamp of the current channel hopping request.
+	 */
+	u32 current_channel_hopping_request_tsf;
+
+	/**
+	 * @brief Index of the current channel in the channel hopping list.
+	 */
+	u32 current_channel_index;
+
+	/**
+	 * @brief Number of elements in the status array.
+	 */
+	u32 channel_status_len;
+
+	/**
+	 * @brief Variable-length array of channel status entries.
+	 */
+	struct wondertap_channel_status status[];
 };
 
 /** @brief Defines the Guard Interval (GI). */
@@ -257,45 +373,53 @@ struct wondertap_tx_rate_mask_params {
 /** @brief Supported hardware/software features. Used for get_capabilities. */
 /** @brief Supported hardware/software features. */
 struct wondertap_capability {
-    /** @brief Capability structure version.
-      * @note For the initial implementation, this must be set to 0.
-      */
-    u32 version;
-    union {
-        /* @brief All capability flags as a single 32-bit word. */
-        u32 raw_bits;
-        /* @brief Access to individual capability bits. */
-        struct {
-            /* @brief Dynamic rate adaptation is supported. */
-            u32 rate_adaptation: 1;
-            /* @brief STA (Station) coexistence is supported. */
-            u32 sta_coexist: 1;
-            /* @brief SAP (Soft AP) coexistence is supported. */
-            u32 sap_coexist: 1;
-            /* @brief P2P (Wi-Fi Direct) coexistence is supported. */
-            u32 p2p_coexist: 1;
-            /* @brief NAN (Neighbor Awareness Networking) coexistence is supported. */
-            u32 nan_coexist: 1;
-            /* @brief Ranging coexistence is supported. */
-            u32 ranging_coexist: 1;
-            /* @brief A-MSDU aggregation is supported. */
-            u32 amsdu_aggregation: 1;
-            /* @brief A-MPDU aggregation is supported. */
-            u32 ampdu_aggregation: 1;
-            /* @brief Dynamic frequency/channel changes are supported. */
-            u32 dynamic_freq: 1;
-            /* @brief Dynamic setting a fixed TX rate is supported. */
-            u32 dynamic_fixed_tx_rate: 1;
-            /* @brief Setting custom management frame retry limits is supported. */
-            u32 custom_mgmt_retry_limit: 1;
-            /* @brief Setting custom data frame retry limits is supported. */
-            u32 custom_data_retry_limit: 1;
-            /* @brief Frame type filtering is supported. */
-            u32 frame_type_filter: 1;
-            /* @brief Reserved for future use. Must be 0. */
-            u32 reserved: 19;
-        } bits;
-    };
+	/** @brief Capability structure version.
+	 * @note For the initial implementation, this must be set to 0.
+	 */
+	u32 version;
+	union {
+		/* @brief All capability flags as a single 32-bit word. */
+		u32 raw_bits;
+		/* @brief Access to individual capability bits. */
+		struct {
+			/* @brief Dynamic rate adaptation is supported. */
+			u32 rate_adaptation: 1;
+			/* @brief STA (Station) coexistence is supported. */
+			u32 sta_coexist: 1;
+			/* @brief SAP (Soft AP) coexistence is supported. */
+			u32 sap_coexist: 1;
+			/* @brief P2P (Wi-Fi Direct) coexistence is supported. */
+			u32 p2p_coexist: 1;
+			/* @brief NAN (Neighbor Awareness Networking) coexistence is supported. */
+			u32 nan_coexist: 1;
+			/* @brief Ranging coexistence is supported. */
+			u32 ranging_coexist: 1;
+			/* @brief A-MSDU aggregation is supported. */
+			u32 amsdu_aggregation: 1;
+			/* @brief A-MPDU aggregation is supported. */
+			u32 ampdu_aggregation: 1;
+			/* @brief Dynamic frequency/channel changes are supported. */
+			u32 dynamic_freq: 1;
+			/* @brief Dynamic setting a fixed TX rate is supported. */
+			u32 dynamic_fixed_tx_rate: 1;
+			/* @brief Setting custom management frame retry limits is supported. */
+			u32 custom_mgmt_retry_limit: 1;
+			/* @brief Setting custom data frame retry limits is supported. */
+			u32 custom_data_retry_limit: 1;
+			/* @brief Frame type filtering is supported. */
+			u32 frame_type_filter: 1;
+			/* @brief Channel hopping is supported. */
+			u32 channel_hopping: 1;
+			/* @brief Reserved for future use. Must be 0. */
+			u32 reserved: 18;
+		} bits;
+	};
+
+	/**
+	 * @brief Maximum Channel Switch Time in micro second required by the vendor for
+	 *	      jumping to the new channel lists.
+	 */
+	u32 maximum_channel_switch_time_us;
 };
 
 /** @brief Initialization parameters passed from the core to the vendor driver. */
@@ -356,9 +480,14 @@ struct wondertap_init_params {
 	u8 rate_adaptation_enable: 1;
 
 	/**
+	 * @brief Channel hopping feature control
+	 */
+	u8 channel_hopping_enable: 1;
+
+	/**
 	 * @brief Reserved for future use and alignment.
 	 */
-	u8 reserved1: 5;
+	u8 reserved1: 4;
 	u8 reserved2;
 
 	/**
@@ -468,6 +597,32 @@ struct wondertap_ops {
 	 * @return 0 on success, negative error code.
 	 */
 	int (*get_capabilities)(void *handle, struct wondertap_capability *features);
+
+	/**
+	 * @brief Schedules a channel switch request.
+	 * @param handle The driver instance handle.
+	 * @param request A pointer to the channel schedule request parameters.
+	 * @return 0 on success, negative error code.
+	 */
+	int (*channel_schedule_request)(void *handle,
+					const struct channel_schedule_request *request);
+
+	/**
+	 * @brief Get Current MAC TSF from the vendor
+	 * @param handle The opaque driver instance handle.
+	 * @param tsf MAC TSF will be utilized for the channel list request.
+	 * Return: 0 on success, negative error code.
+	 */
+	int (*get_mac_tsf)(void *handle, u32 *mac_tsf);
+
+	/**
+	 * @brief Schedules a channel switch request.
+	 * @param handle The driver instance handle.
+	 * @param get A pointer to the channel status report.
+	 * @return 0 on success, negative error code.
+	 */
+	int (*get_channel_status_report)(void *handle,
+		struct wondertap_channel_status_report *report);
 };
 
 /**
@@ -484,6 +639,8 @@ enum wondertap_ver {
 	WONDER_VERSION_1_4_1,
 	WONDER_VERSION_1_5,
 	WONDER_VERSION_1_5_1,
+	WONDER_VERSION_1_6_1,
+	WONDER_VERSION_1_6_2 = WONDER_VERSION_1_6_1,
 	WONDER_VERSION_MAX,
 };
 

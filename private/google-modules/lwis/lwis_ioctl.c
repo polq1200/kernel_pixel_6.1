@@ -649,7 +649,7 @@ static int cmd_device_disable(struct lwis_client *lwis_client, struct lwis_cmd_p
 		dev_err(lwis_dev->dev, "Failed to power down device\n");
 		goto exit_locked;
 	}
-	lwis_device_event_states_clear_locked(lwis_dev);
+	lwis_device_event_states_clear(lwis_dev);
 
 	lwis_dev->enabled--;
 	lwis_client->is_enabled = false;
@@ -745,7 +745,7 @@ static int cmd_device_reset(struct lwis_client *lwis_client, struct lwis_cmd_pkt
 			 "Device is not enabled, IoEntries will not be executed in DEVICE_RESET\n");
 
 	mutex_lock(&lwis_dev->interclient_lock);
-	lwis_device_event_states_clear_locked(lwis_dev);
+	lwis_device_event_states_clear(lwis_dev);
 	mutex_unlock(&lwis_dev->interclient_lock);
 	mutex_unlock(&lwis_client->lock);
 soft_reset_exit:
@@ -804,7 +804,7 @@ static int cmd_device_suspend(struct lwis_client *lwis_client, struct lwis_cmd_p
 		goto exit_locked;
 	}
 
-	lwis_device_event_states_clear_locked(lwis_dev);
+	lwis_device_event_states_clear(lwis_dev);
 
 	lwis_dev->is_suspended = true;
 	dev_info(lwis_dev->dev, "Device suspended\n");

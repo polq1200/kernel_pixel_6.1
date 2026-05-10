@@ -230,7 +230,6 @@ struct batt_ssoc_state {
 	int spoof_end_soc;
 	int spoof_reason;
 	bool spoof_triggered;
-	int spoof_dwell_hold_soc;
 };
 
 struct gbatt_ccbin_data {
@@ -844,10 +843,6 @@ struct batt_drv {
 	ktime_t bd_time_sum;
 
 	int fake_capacity_level;
-
-	/* Dwell v1.5: Dynamic Spoofing Ranges synced from Charger */
-	int dynamic_charge_stop_level;
-	int dynamic_charge_start_level;
 };
 
 #define IS_TEMPD_TRIGGERED(batt_drv) \
@@ -1234,8 +1229,6 @@ static void batt_prlog__(int info_level, const char *format, ...)
 #define SSOC_FULL 100
 #define UICURVE_BUF_SZ	(UICURVE_MAX * 15 + 1)
 #define SSOC_HIGH_SOC 90
-
-#define HOLD_SPOOFING_RANGE 3
 
 enum ssoc_uic_type {
 	SSOC_UIC_TYPE_DSG  = -1,
@@ -2099,8 +2092,8 @@ static void batt_force_fcr_update_charging_policy(struct batt_drv *batt_drv)
 
 static int batt_chg_vbat2tier(const int vbatt_idx)
 {
-	return vbatt_idx < GBMS_STATS_TIER_COUNT ?
-		vbatt_idx : GBMS_STATS_TIER_COUNT - 1;
+	/* Ensure it's at least 0, and at most TIER_COUNT - 1 */
+	return min(max(0, vbatt_idx), GBMS_STATS_TIER_COUNT - 1);
 }
 
 /*
@@ -3348,33 +3341,9 @@ static bool batt_csi_status_is_dock(const struct batt_drv *batt_drv)
 	if (!batt_drv->csi.status_votable)
 		return false;
 
+
 	dock_status = gvotable_get_int_vote(batt_drv->csi.status_votable, "CSI_STATUS_DEFEND_DOCK");
 	return dock_status == CSI_STATUS_Defender_Dock;
-}
-
-static bool batt_csi_status_is_dwell(const struct batt_drv *batt_drv)
-{
-	int dwell_status;
-
-	if (!batt_drv->csi.status_votable)
-		return false;
-
-	dwell_status = gvotable_get_int_vote(batt_drv->csi.status_votable,
-		 			     "CSI_STATUS_DEFEND_DWELL");
-	return dwell_status == CSI_STATUS_Defender_Dwell;
-}
-
-static bool batt_csi_status_is_visible_dwell(const struct batt_drv *batt_drv)
-{
-	int dwell_status, longlife_status;
-
-	if (!batt_drv->csi.status_votable)
-		return false;
-
-	dwell_status = gvotable_get_int_vote(batt_drv->csi.status_votable,
-					     "CSI_STATUS_DEFEND_DWELL");
-	longlife_status = gvotable_get_int_vote(batt_drv->csi.type_votable, "CSI_TYPE_DEFEND");
-	return dwell_status == CSI_STATUS_Defender_Dwell && longlife_status == CSI_TYPE_LongLife;
 }
 
 /* all reset on disconnect */
@@ -13196,9 +13165,6 @@ static int gbatt_get_capacity_for_charger(struct batt_drv *batt_drv)
 
 	if (batt_drv->fake_capacity >= 0 && batt_drv->fake_capacity <= 100)
 		capacity = batt_drv->fake_capacity;
-	else if (ssoc_state->spoof_reason == SPOOF_SOC_CHARGING_POLICY ||
-		 ssoc_state->spoof_reason == SPOOF_SOC_DWELL_DEFEND)
-		capacity = ssoc_get_real(ssoc_state);
 	else
 		capacity = ssoc_get_capacity(ssoc_state);
 
@@ -13223,19 +13189,6 @@ static void gbatt_check_spoof_reason(struct batt_drv *batt_drv)
 		spoof_reason = SPOOF_SOC_CHARGING_POLICY;
 		spoof_start_soc = LONGLIFE_CHARGE_STOP_LEVEL;
 		spoof_end_soc = LONGLIFE_CHARGE_START_LEVEL - 1;
-	}
-
-	if (batt_csi_status_is_dwell(batt_drv)) {
-		ssoc_state->spoof_dwell_hold_soc = -1;
-		spoof_reason = SPOOF_SOC_DWELL_DEFEND;
-		spoof_end_soc = batt_drv->dynamic_charge_start_level - 1;
-		if (batt_csi_status_is_visible_dwell(batt_drv))
-			/* Normal Dwell states which don't need to spoof Soc into different level */
-			spoof_start_soc = batt_drv->dynamic_charge_stop_level;
-		else
-			/* Special Dwell state needs to spoof Soc into specific Soc */
-			/* Stage 1: spoof UI to 100% */
-			spoof_start_soc = SSOC_FULL;
 	}
 
 	if (IS_TEMPD_TRIGGERED(batt_drv)) {
@@ -13272,21 +13225,6 @@ static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 	int ui_soc = gbatt_get_capacity(batt_drv);
 
 	if (!is_connect) {
-		if (batt_csi_status_is_dwell(batt_drv)) {
-			/* To spoof Soc only during Dwell ACTIVE_HOLD state (only showed in HLOS) */
-			if (ssoc_state->spoof_dwell_hold_soc == -1) {
-				/* First time entering ACTIVE_HOLD */
-				ssoc_state->spoof_dwell_hold_soc = gdf;
-				/* spoofing to the current UISoc */
-				ssoc_state->spoof_triggered = true;
-			}
-
-			int delta_soc = (ssoc_state->spoof_dwell_hold_soc - gdf);
-
-			if (delta_soc < HOLD_SPOOFING_RANGE)
-				/* ssoc has not dropped more than "HOLD_SPOOFING_RANGE" */
-				return;
-		}
 		/* update curve when disconnected */
 		if (ssoc_state->spoof_triggered &&
 		    capacity != ssoc_state->spoof_start_soc)
@@ -13297,61 +13235,27 @@ static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 		gbatt_check_spoof_reason(batt_drv);
 	}
 
-	/* TODO: To see if it is possible to merge these two cases to make code clear */
-	if (ssoc_state->spoof_reason == SPOOF_SOC_CHARGING_POLICY ||
-	    ssoc_state->spoof_reason == SPOOF_SOC_DWELL_DEFEND) {
-		/* Entry check */
-		if (!ssoc_state->spoof_triggered && is_connect &&
-			ssoc_state->spoof_reason != SPOOF_SOC_NONE &&
-			gdf >= ssoc_state->spoof_end_soc) {
-			/* Entry: when Soc reachs spoof_start_soc (charge or self-discharge) */
-			if (capacity == ssoc_state->spoof_start_soc) {
-				ssoc_state->spoof_triggered = true;
-			} else {
-				/*
-				 * Pre-entry: Step up UI SOC to spoof_start_soc during Not_Charging.
-				 * Resolves the Dwell v1.5 gap between charge_stop_level and Full.
-				 */
-				if (batt_drv->chg_state.f.chg_status
-				    == POWER_SUPPLY_STATUS_NOT_CHARGING) {
-					/*
-					 * To fill the gap between target & current Soc
-					 * Workaround: Stepping up Soc by 1%
-					 */
-					if (capacity < ssoc_state->spoof_start_soc)
-						gbatt_reset_curve(batt_drv, capacity + 1);
-				}
-			}
-		}
-		/* Exit check */
-		if (ssoc_state->spoof_triggered &&
-			(gdf < ssoc_state->spoof_end_soc || gdf > ssoc_state->spoof_start_soc))
-			is_soc_curve_update = true;
-	} else {
-		/* Entry check */
-		if (!ssoc_state->spoof_triggered && is_connect &&
-			(ssoc_state->spoof_reason != SPOOF_SOC_NONE) &&
-			(capacity == ssoc_state->spoof_start_soc)) {
-			ssoc_state->spoof_triggered = true;
-			/* A patch to fix a corner case in http://pa/3660263 */
-			/* update to recharge normally */
-			if (gdf <= ssoc_state->spoof_end_soc)
-				gbatt_reset_curve(batt_drv, gdf);
-		}
-		/* check if keep spoof */
-		if (ssoc_state->spoof_triggered &&
-			(capacity < ssoc_state->spoof_end_soc ||
-			 capacity > ssoc_state->spoof_start_soc))
-			is_soc_curve_update = true;
+	if (!ssoc_state->spoof_triggered && is_connect &&
+	    (ssoc_state->spoof_reason != SPOOF_SOC_NONE) &&
+	    (capacity == ssoc_state->spoof_start_soc)) {
+		ssoc_state->spoof_triggered = true;
+
+		/* update to recharge normally */
+		if (gdf <= ssoc_state->spoof_end_soc)
+			gbatt_reset_curve(batt_drv, gdf);
 	}
+
+	/* check if keep spoof */
+	if (ssoc_state->spoof_triggered &&
+	    (capacity < ssoc_state->spoof_end_soc ||
+	     capacity > ssoc_state->spoof_start_soc))
+		is_soc_curve_update = true;
 
 	if (is_soc_curve_update) {
 		/* avoid back to spoof after reset curve */
 		if (capacity > ssoc_state->spoof_start_soc &&
 		    ui_soc == ssoc_state->spoof_start_soc)
 			ui_soc++;
-		/* To trigger Soc update immediately */
-		ssoc_state->ssoc_rl_state.rl_ssoc_target = -1;
 
 		gbatt_reset_curve(batt_drv, ui_soc);
 		ssoc_state->spoof_triggered = false;
@@ -13818,22 +13722,6 @@ static int gbatt_gbms_set_property(struct power_supply *psy,
 		mutex_unlock(&batt_drv->chg_lock);
 		break;
 
-	/* Dwell v1.5: Receive sync from charger */
-	case GBMS_PROP_CHARGE_STOP_LEVEL:
-		mutex_lock(&batt_drv->chg_lock);
-		batt_drv->dynamic_charge_stop_level = val->prop.intval;
-		/* Trigger re-evaluation of spoofing logic */
-		gbatt_check_spoof_soc(batt_drv);
-		mutex_unlock(&batt_drv->chg_lock);
-		break;
-
-	case GBMS_PROP_CHARGE_START_LEVEL:
-		mutex_lock(&batt_drv->chg_lock);
-		batt_drv->dynamic_charge_start_level = val->prop.intval;
-		gbatt_check_spoof_soc(batt_drv);
-		mutex_unlock(&batt_drv->chg_lock);
-		break;
-
 	default:
 		pr_debug("%s: route to gbatt_set_property, psp:%d\n", __func__, psp);
 		return -ENODATA;
@@ -13858,8 +13746,6 @@ static int gbatt_gbms_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_HEALTH:
 	case GBMS_PROP_LOGBUFFER_BD:
 	case GBMS_PROP_BD_TIME_SUM:
-	case GBMS_PROP_CHARGE_STOP_LEVEL:
-	case GBMS_PROP_CHARGE_START_LEVEL:
 		return 1;
 	default:
 		break;
