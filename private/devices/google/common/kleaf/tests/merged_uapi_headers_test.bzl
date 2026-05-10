@@ -20,21 +20,21 @@ def merged_uapi_headers_test(name):
         name = "{}/uapi_headers_1".format(name),
         srcs = native.glob(["data/uapi_headers_1/**/*.h"]),
         out = "uapi_headers_1.tar.gz",
-        kernel_build = "//aosp:kernel_aarch64",
+        kernel_build = "//common/ack:kernel_aarch64",
     )
 
     ddk_uapi_headers(
         name = "{}/uapi_headers_2".format(name),
         srcs = native.glob(["data/uapi_headers_2/**/*.h"]),
         out = "uapi_headers_2.tar.gz",
-        kernel_build = "//aosp:kernel_aarch64",
+        kernel_build = "//common/ack:kernel_aarch64",
     )
 
     ddk_uapi_headers(
         name = "{}/uapi_headers_expected".format(name),
         srcs = native.glob(["data/uapi_headers_expected/**/*.h"]),
         out = "uapi_headers_expected.tar.gz",
-        kernel_build = "//aosp:kernel_aarch64",
+        kernel_build = "//common/ack:kernel_aarch64",
     )
 
     merged_uapi_headers(
@@ -52,6 +52,30 @@ def merged_uapi_headers_test(name):
         size = "small",
     )
     tests.append("{}/merge_test".format(name))
+
+    ddk_uapi_headers(
+        name = "{}/cleaned_uapi_headers_expected".format(name),
+        srcs = native.glob(["data/cleaned_uapi_headers_expected/**/*.h"]),
+        out = "cleaned_uapi_headers_expected.tar.gz",
+        kernel_build = "//common/ack:kernel_aarch64",
+    )
+
+    merged_uapi_headers(
+        name = "{}/cleaned_uapi_headers".format(name),
+        clean = True,
+        uapi_headers = [
+            "{}/uapi_headers_1".format(name),
+            "{}/uapi_headers_2".format(name),
+        ],
+    )
+
+    file_content_test(
+        name = "{}/clean_test".format(name),
+        actual = "{}/cleaned_uapi_headers".format(name),
+        expected = "{}/cleaned_uapi_headers_expected".format(name),
+        size = "small",
+    )
+    tests.append("{}/clean_test".format(name))
 
     files_test(
         name = "{}/default_out_test".format(name),

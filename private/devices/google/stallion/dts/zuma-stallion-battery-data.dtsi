@@ -46,6 +46,14 @@ max77779,config {
 		max77779,fg_n_regval = /bits/ 16 <
 			0xB7 0x2341	/* nConvgCfg */
 		>;
+		max77779,fg-aafv = /bits/ 32 <
+			  0   95  0xf  0x0299
+			 20   90  0xf  0x014C
+			 40   85  0xf  0x014C
+			 60   80  0xf  0x014C
+			 80   75  0xf  0x014C
+			120   70  0xf  0x014C
+		>;
 	};
 
 	/* STA5_LWN_3953_G1.txt, b/441795849#comment1 */
@@ -89,6 +97,14 @@ max77779,config {
 		max77779,fg_n_regval = /bits/ 16 <
 			0xB7 0x2240	/* nConvgCfg */
 		>;
+		max77779,fg-aafv = /bits/ 32 <
+			  0   95  0xf  0x0280
+			 20   90  0xf  0x0140
+			 40   85  0xf  0x0140
+			 60   80  0xf  0x0140
+			 80   75  0xf  0x0140
+			120   70  0xf  0x0140
+		>;
 	};
 
 	/* STA5DOE2_ATL_3850_G1.ini.txt, b/399741553#comment1 */
@@ -128,6 +144,14 @@ max77779,config {
 		max77779,fg_n_regval = /bits/ 16 <
 			0xB7 0x2341	/* nConvgCfg */
 		>;
+		max77779,fg-aafv = /bits/ 32 <
+			  0   95  0xf  0x02a1
+			 20   90  0xf  0x0150
+			 40   85  0xf  0x0150
+			 60   80  0xf  0x0150
+			 80   75  0xf  0x0150
+			120   70  0xf  0x0150
+		>;
 	};
 
 	/* STA5DOE2_LWN_3851_G1.ini.txt, b/399740320#comment1 */
@@ -166,6 +190,14 @@ max77779,config {
 		>;
 		max77779,fg_n_regval = /bits/ 16 <
 			0xB7 0x2341	/* nConvgCfg */
+		>;
+		max77779,fg-aafv = /bits/ 32 <
+			  0   95  0xf  0x02a1
+			 20   90  0xf  0x0150
+			 40   85  0xf  0x0150
+			 60   80  0xf  0x0150
+			 80   75  0xf  0x0150
+			120   70  0xf  0x0150
 		>;
 	};
 };

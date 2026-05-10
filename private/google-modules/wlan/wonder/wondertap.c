@@ -3,6 +3,7 @@
 #include <linux/errno.h>
 #include <linux/export.h>
 #include <linux/etherdevice.h>
+#include <linux/delay.h>
 
 #include "include/wonder/wondertap.h"
 #include "wondertap_internal.h"
@@ -42,10 +43,38 @@ void wondertap_unregister_ops(const struct wondertap_ops *ops)
 	}
 }
 
-int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init_params *unused)
+static void wondertap_dump_init_params(struct wondertap_init_params *params)
+{
+	wonder_info("========== [ Wondertap Vendor Init ] ==========\n");
+	wonder_info("    Channel: Freq=%u, Bw=%u\n", params->channel.freq,
+		params->channel.bandwidth);
+	if (params->rate_adaptation_enable) {
+		wonder_info("RA TxRate: Max Pre=%u, Max Mcs=%u, Max Bw=%u, Max Nss=%u\n",
+				params->tx_rate_mask.max_preamble,
+				params->tx_rate_mask.max_mcs,
+				params->tx_rate_mask.max_bw,
+				params->tx_rate_mask.max_nss);
+	} else {
+		wonder_info("    Fixed TxRate:  Pre=%u, Mcs=%u, Gi=%u, Bw=%u\n",
+				params->tx_rate.preamble,
+				params->tx_rate.mcs,
+				params->tx_rate.gi,
+				params->tx_rate.bw);
+	}
+	wonder_info("    Country: %.2s\n", params->country_code);
+	wonder_info("    MAC: %02x:XX:XX:XX:XX:%02x\n", params->mac_addr[0],
+		params->mac_addr[5]);
+	wonder_info("    BSSID: %02x:XX:XX:XX:XX:%02x\n", params->bssid[0], params->bssid[5]);
+	wonder_info("===============================================\n");
+}
+
+int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init_params *_params)
 {
 	struct wondertap_init_params params;
 	int ret = -EOPNOTSUPP;
+#define WONDER_INIT_RETRY_CNT 5
+#define WONDER_INIT_RETRY_WAIT 400
+	int retry;
 
 	mutex_lock(&wondertap->lock);
 	if (wondertap_is_up(wondertap)) {
@@ -72,21 +101,27 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 		memcpy(params.mac_addr, wondertap->mac_addr, ETH_ALEN);
 		memcpy(params.country_code, wondertap->cached_country_code, sizeof(wondertap->cached_country_code));
 
-		wonder_info("========== [ Wondertap Vendor Init ] ==========\n");
-		wonder_info("    Channel: Freq=%u, Bw=%u\n", params.channel.freq,
-		params.channel.bandwidth);
-		wonder_info("    TxRate:  Pre=%u, Mcs=%u, Gi=%u, Bw=%u\n",
-			    params.tx_rate.preamble,
-		params.tx_rate.mcs,
-		params.tx_rate.gi,
-		params.tx_rate.bw);
-		wonder_info("    Country: %.2s\n", params.country_code);
-		wonder_info("    MAC: %02x:XX:XX:XX:XX:%02x\n", wondertap->mac_addr[0],
-			wondertap->mac_addr[5]);
-		wonder_info("    BSSID: %02x:XX:XX:XX:XX:%02x\n", params.bssid[0], params.bssid[5]);
-		wonder_info("===============================================\n");
+		if (_params->rate_adaptation_enable) {
+			params.rate_adaptation_enable = _params->rate_adaptation_enable;
+			params.tx_rate_mask.max_preamble = wondertap->cached_tx_rate.preamble;
+			params.tx_rate_mask.max_bw = wondertap->cached_tx_rate.bw;
+			params.tx_rate_mask.max_nss = wondertap->cached_tx_rate.nss;
+			params.tx_rate_mask.max_mcs = wondertap->cached_tx_rate.mcs;
+		}
 
-		ret = wondertap_ops->init(&wondertap->vendor_handle, &params);
+		wondertap_dump_init_params(&params);
+		for (retry = 0; retry <= WONDER_INIT_RETRY_CNT; retry++) {
+			ret = wondertap_ops->init(&wondertap->vendor_handle, &params);
+			if (ret == 0)
+				break;
+
+			if (retry < WONDER_INIT_RETRY_CNT) {
+				wonder_warn(
+					"Vendor init failed: %d. Retrying in %d ms...(retry %d)\n",
+					ret, WONDER_INIT_RETRY_WAIT, retry + 1);
+				msleep(WONDER_INIT_RETRY_WAIT);
+			}
+		}
 		if (ret == 0) {
 			wondertap->state = WONDERTAP_STATE_UP;
 			wonder_info("Vendor init successful. State set to UP.\n");
@@ -197,15 +232,21 @@ int wondertap_set_tx_rate_mask(struct wondertap_data *wondertap, const struct wo
 	int ret = -EOPNOTSUPP;
 
 	mutex_lock(&wondertap->lock);
+	wondertap->cached_tx_rate.preamble = params->max_preamble;
+	wondertap->cached_tx_rate.mcs = params->max_mcs;
+	wondertap->cached_tx_rate.bw = params->max_bw;
+	wondertap->cached_tx_rate.nss = params->max_nss;
+	wondertap->cached_tx_rate.gi = WONDERTAP_RATE_GI_DEFAULT;
+	wondertap->cache_flags |= WONDERTAP_CACHE_TX_RATE_SET;
 	if (wondertap_is_up(wondertap)) {
 		if (wondertap_ops && wondertap_ops->set_tx_rate_mask) {
-			return wondertap_ops->set_tx_rate_mask(wondertap->vendor_handle, params);
+			ret = wondertap_ops->set_tx_rate_mask(wondertap->vendor_handle, params);
 		} else {
 			wonder_error("Vendor operation 'set_tx_rate_mask' is not implemented\n");
 			ret = -EOPNOTSUPP;
 		}
 	} else {
-		wonder_error("wondertap is invalid or not up.\n");
+		wonder_warn("wondertap is not active; caching incoming TX rate settings.\n");
 		ret = -ENODEV;
 	}
 

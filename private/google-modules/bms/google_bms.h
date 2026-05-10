@@ -42,6 +42,7 @@ struct device_node;
 #define GBMS_AACT_PROFILE_MAX 100
 #define GBMS_AACC_TEMP_NB_MAX 10
 #define GBMS_AACC_SOC_SIZE 100
+#define GBMS_AACV_DATA_MAX 10
 
 struct aacc_weight_profile {
 	/* the profile of aacc_chg/aacc_dsg */
@@ -56,6 +57,7 @@ struct aacc_profile {
 	int start_soc;			/* the start soc in each session */
 	int end_soc;			/* the end soc in each session */
 	int aawc;			/* wrights cycles */
+	u8 lotr;			/* determine the storage layout version */
 
 	/* to calculate the average temperature */
 	long long temp_sum;
@@ -129,6 +131,12 @@ struct gbms_chg_profile {
 
 	/* AACC feature */
 	struct aacc_profile aacc_cycles;
+
+	/* AACV feature */
+	u32 aacv_cycles[GBMS_AACV_DATA_MAX];
+	u32 aacv_offsets[GBMS_AACV_DATA_MAX];
+	u32 aacv_nb_limits;
+	u32 aacv_offset;
 
 	bool debug_chg_profile;
 	bool enable_switch_chg_profile;
@@ -739,6 +747,9 @@ int gbms_read_aacc_chg_weights(struct gbms_chg_profile *profile,
 int gbms_read_aacc_dsg_weights(struct gbms_chg_profile *profile,
 			       struct device_node *node);
 int gbms_aacc_temp_idx(const struct gbms_chg_profile *profile, int temp, bool is_charge);
+int gbms_read_aacv_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node);
+int gbms_aacv_get_offset(const struct gbms_chg_profile *profile, const int cycles);
 
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
 
@@ -1047,6 +1058,7 @@ enum spoof_soc_reason {
 	SPOOF_SOC_CHARGING_POLICY,
 	SPOOF_SOC_ADAPTIVE_CHARGING,
 	SPOOF_SOC_TEMP_DEFEND,
+	SPOOF_SOC_DWELL_DEFEND,
 };
 
 enum bpst_batt_status {

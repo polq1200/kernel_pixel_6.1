@@ -7,6 +7,7 @@ switch between building from different sources and using prebuilt artifacts.
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load(":create_file.bzl", "create_file")
 
 def _create_prebuilt_target(name, pkg, target):
     """Creates an alias for a specific prebuilt kernel target.
@@ -87,6 +88,22 @@ def _create_target(name, pkg, target):
 
     return ":{}/{}".format(prefix, target)
 
+def _to_word(s, sep):
+    """Replace non alphanumeric characters with the given sep."""
+    return "".join([c if c.isalnum() else sep for c in s.elems()])
+
+def _kconfig_symbol(name, pkg):
+    """Return the kconfig symbol for a package.
+
+    Args:
+        name: The base name for the kernel selection rule (e.g., "kernel_package").
+        pkg: The kernel_package struct containing source and prebuilt info.
+    """
+    return "{}_IS_{}".format(
+        _to_word(name, "_").upper(),
+        _to_word(pkg.name, "_").upper(),
+    )
+
 def kernel_package(name, package, prebuilt_repos = {}, aliases = []):
     """Create a kernel package item to be used in kernel_selection().
 
@@ -161,3 +178,33 @@ def kernel_selection(name, packages, targets, default = ""):
                 for pkg in packages
             }),
         )
+
+    create_file(
+        name = "{}_kconfig".format(name),
+        out = "Kconfig.{}".format(name),
+        contents = [
+            'menu "{}"'.format(_to_word(name, " ").title()),
+            'choice\n\tprompt "{} selection"\n'.format(name),
+        ] + [
+            'config {}\n\tbool "{} is {}"\n'.format(
+                _kconfig_symbol(name, pkg),
+                name,
+                pkg.name,
+            )
+            for pkg in packages
+        ] + [
+            "endchoice",
+            "endmenu",
+        ],
+    )
+
+    create_file(
+        name = "{}_defconfig_fragment".format(name),
+        out = "{}_defconfig".format(name),
+        contents = select({
+            ":{}_is_{}".format(name, pkg.name): [
+                "CONFIG_{}=y".format(_kconfig_symbol(name, pkg)),
+            ]
+            for pkg in packages
+        }),
+    )

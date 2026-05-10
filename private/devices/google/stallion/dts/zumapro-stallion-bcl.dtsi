@@ -32,7 +32,7 @@
 	batoilo_upper = <8000>;
 	batoilo2_lower = <3800>;
 	batoilo2_upper = <10000>;
-	batoilo2_otg_trig_lvl = <4800>;
+	batoilo_otg_trig_lvl = <4800>;
 	batoilo2_otg_trig_lvl = <6800>;
 	batoilo_usb_trig_lvl = <4800>;
 	batoilo2_usb_trig_lvl = <6800>;
@@ -43,7 +43,7 @@
 	batoilo_otg_bat_open_to = <0x9>; /* 48ms */
 	batoilo_bat_open_to = <0x9>;     /* 48ms */
 	batoilo2_bat_open_to = <0x3>;    /* 12ms */
-	batoilo_rel = <0x3>;   /* 10ms */
+	batoilo_rel = <0x2>;   /* 1ms */
 	batoilo2_rel = <0x2>;   /* 1ms */
 	batoilo_det = <0x1F>;   /* 46ms DEBOUNCE to VDROOP */
 	batoilo2_det = <0x1>;   /* 30us DEBOUNCE to VDROOP */
@@ -75,9 +75,6 @@
 		<&gpa9 6 GPIO_ACTIVE_HIGH>,		/* VDROOP2 */
 		<&gpp11 0 GPIO_ACTIVE_HIGH>,
 		<&gpp13 0 GPIO_ACTIVE_HIGH>;
-	bat_ktimer_supported;
-	bat_ktimer_en;
-	bat_ktimer = <600>;		/* ms */
 	rffe_channel = <11>;
 	pinctrl-names = "bcl-rffe-modem", "bcl-batoilo-modem";
 	pinctrl-0 = <&bcl_rffe_modem>;

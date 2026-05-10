@@ -105,3 +105,7 @@ ifneq ($(wildcard $(GMODULE_SRC_PATH)/soc/rdo/include),)
 ccflags-y += -I$(GMODULE_SRC_PATH)/soc/rdo/include
 endif
 
+ifneq ($(wildcard $(GMODULE_SRC_PATH)/soc/rdo/mem-qos/include),)
+ccflags-y += -I$(GMODULE_SRC_PATH)/soc/rdo/mem-qos/include
+endif
+

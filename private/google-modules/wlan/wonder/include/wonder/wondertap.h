@@ -25,6 +25,7 @@ enum wondertap_rate_preamble {
 	WONDERTAP_RATE_PREAMBLE_VHT = 2, /* 802.11ac Very High Throughput */
 	WONDERTAP_RATE_PREAMBLE_HE  = 3, /* 802.11ax High Efficiency */
 	WONDERTAP_RATE_PREAMBLE_EHT = 4, /* 802.11be Extremely High Throughput */
+	WONDERTAP_RATE_PREAMBLE_MAX,
 };
 
 /**
@@ -223,67 +224,33 @@ static_assert(sizeof(struct wonder_txd) <= 48);
  */
 struct wondertap_tx_rate_mask_params {
 	/**
-	 * @brief A bitmask from `enum wondertap_tx_rate_mask_enable` that
-	 * specifies which of the rate masks in this structure are valid and
-	 * should be applied by the driver.
+	 * @brief The maximum preamble/PHY type for this rate.
 	 */
-	u32 enable_mask;
+	enum wondertap_rate_preamble max_preamble;
 
 	/**
-	 * @brief A bitmap of permitted legacy (802.11a/g) rates.
-	 * The bits correspond to the driver's internal legacy rate indices.
-	 * This field is only valid if WONDERTAP_RATEMASK_EN_LEGACY is set.
+	 * @brief The maximum channel bandwidth for this rate.
 	 */
-	u32 legacy_rates;
+	enum wondertap_rate_bw max_bw;
 
 	/**
-	 * @brief A bitmap of permitted HT (802.11n) MCS values for each
-	 * number of spatial streams (NSS).
-	 *
-	 * The array is indexed by (NSS - 1). For example, `ht_mcs[0]` is the
-	 * MCS mask for 1 spatial stream (NSS=1).
-	 * A bit `(1 << X)` being set in `ht_mcs[Y]` means that MCS index X
-	 * is permitted for (Y+1) spatial streams.
-	 *
-	 * This field is only valid if WONDERTAP_RATEMASK_EN_HT is set.
+	 * @brief The number of spatial streams (NSS).
+	 * Typically 1-4 for client devices. 0 is invalid.
 	 */
-	u16 ht_mcs[WONDERTAP_HT_NSS_MAX];
+	u8 max_nss;
 
 	/**
-	 * @brief A bitmap of permitted VHT (802.11ac) MCS values for each NSS.
-	 *
-	 * The array is indexed by (NSS - 1). For example, `vht_mcs[0]` is the
-	 * MCS mask for 1 spatial stream.
-	 * A bit `(1 << X)` being set in `vht_mcs[Y]` means that MCS index X
-	 * (0-9) is permitted for (Y+1) spatial streams.
-	 *
-	 * This field is only valid if WONDERTAP_RATEMASK_EN_VHT is set.
+	 * @brief The Maximum Modulation and Coding Scheme (MCS) index.
+	 * - For HT (802.11n): 0-7 (up to 31 for 4 streams).
+	 * - For VHT (802.11ac): 0-9.
+	 * - For HE (802.11ax): 0-11.
+	 * - For Legacy: This field is interpreted as the legacy rate index
+	 * (e.g., index for 54 Mbps, 48 Mbps, etc.). Ignored by some drivers.
 	 */
-	u16 vht_mcs[WONDERTAP_VHT_NSS_MAX];
+	u8 max_mcs;
 
-	/**
-	 * @brief A bitmap of permitted HE (802.11ax) MCS values for each NSS.
-	 *
-	 * The array is indexed by (NSS - 1). For example, `he_mcs[0]` is the
-	 * MCS mask for 1 spatial stream.
-	 * A bit `(1 << X)` being set in `he_mcs[Y]` means that MCS index X
-	 * (0-11) is permitted for (Y+1) spatial streams.
-	 *
-	 * This field is only valid if WONDERTAP_RATEMASK_EN_HE is set.
-	 */
-	u16 he_mcs[WONDERTAP_HE_NSS_MAX];
-
-	/**
-	 * @brief A bitmap of permitted EHT (802.11be) MCS values for each NSS.
-	 *
-	 * The array is indexed by (NSS - 1). For example, `eht_mcs[0]` is the
-	 * MCS mask for 1 spatial stream.
-	 * A bit `(1 << X)` being set in `eht_mcs[Y]` means that MCS index X
-	 * (0-13) is permitted for (Y+1) spatial streams.
-	 *
-	 * This field is only valid if WONDERTAP_RATEMASK_EN_EHT is set.
-	 */
-	u16 eht_mcs[WONDERTAP_EHT_NSS_MAX];
+	/** @brief Reserved for future use. */
+	u8 reserved[2];
 };
 
 
@@ -333,69 +300,79 @@ struct wondertap_capability {
 
 /** @brief Initialization parameters passed from the core to the vendor driver. */
 struct wondertap_init_params {
-    /**
-     * @brief The initial channel and frequency for the interface.
-     */
-    struct wondertap_set_freq_params channel;
-
-    /**
-     * @brief The default fixed transmission rate.
-     */
-    struct wondertap_fixed_tx_rate_params tx_rate;
-
-    /**
-     * @brief The MAC address for this interface.
-     */
-    u8 mac_addr[ETH_ALEN];
-
-    /**
-     * @brief The BSSID to filter.
-     */
-    u8 bssid[ETH_ALEN];
-
-    /**
-     * @brief Max retransmission attempts for management frames.
-     *
-     * This value controls the retry behavior for the packet at the hardware
-     * level. The interpretation is as follows:
-     * - 0: The frame will be transmitted once with no retries.
-     * - 1-254: The frame will be re-transmitted up to this many times if no
-     *   acknowledgment is received.
-     * - 255: The hardware will use an unlimited number of retries.
+	/**
+	 * @brief The initial channel and frequency for the interface.
 	 */
-    u8 mgmt_retry_limit;
+	struct wondertap_set_freq_params channel;
 
-    /**
-     * @brief Max retransmission attempts for data frames.
-     *
-     * This value controls the retry behavior for the packet at the hardware
-     * level. The interpretation is as follows:
-     * - 0: The frame will be transmitted once with no retries.
-     * - 1-254: The frame will be re-transmitted up to this many times if no
-     *   acknowledgment is received.
-     * - 255: The hardware will use an unlimited number of retries.
-     */
-    u8 data_retry_limit;
+	/**
+	 * @brief The default fixed transmission rate.
+	 */
+	struct wondertap_fixed_tx_rate_params tx_rate;
 
-    /**
-     * @brief Aggregation feature control
-     */
-    u8 amsdu_enable: 1;
-    u8 ampdu_enable: 1;
+	/**
+	 * @brief The MAC address for this interface.
+	 */
+	u8 mac_addr[ETH_ALEN];
 
-    /**
-     * @brief Reserved for future use and alignment.
-     */
-    u8 reserved1: 6;
-    u8 reserved2;
+	/**
+	 * @brief The BSSID to filter.
+	 */
+	u8 bssid[ETH_ALEN];
 
-    /**
-     * @brief The two-letter ISO 3166 country code (e.g., "US", "TW").
-     *
-     * @note Includes the null terminator (\0), hence the size of 3.
-     */
-    char country_code[3];
-    u8 reserved3;
+	/**
+	 * @brief Max retransmission attempts for management frames.
+	 *
+	 * This value controls the retry behavior for the packet at the hardware
+	 * level. The interpretation is as follows:
+	 * - 0: The frame will be transmitted once with no retries.
+	 * - 1-254: The frame will be re-transmitted up to this many times if no
+	 *   acknowledgment is received.
+	 * - 255: The hardware will use an unlimited number of retries.
+	 */
+	u8 mgmt_retry_limit;
+
+	/**
+	 * @brief Max retransmission attempts for data frames.
+	 *
+	 * This value controls the retry behavior for the packet at the hardware
+	 * level. The interpretation is as follows:
+	 * - 0: The frame will be transmitted once with no retries.
+	 * - 1-254: The frame will be re-transmitted up to this many times if no
+	 *   acknowledgment is received.
+	 * - 255: The hardware will use an unlimited number of retries.
+	 */
+	u8 data_retry_limit;
+
+	/**
+	 * @brief Aggregation feature control
+	 */
+	u8 amsdu_enable: 1;
+	u8 ampdu_enable: 1;
+
+	/**
+	 * @brief Rate Adaptation feature control
+	 */
+	u8 rate_adaptation_enable: 1;
+
+	/**
+	 * @brief Reserved for future use and alignment.
+	 */
+	u8 reserved1: 5;
+	u8 reserved2;
+
+	/**
+	 * @brief The two-letter ISO 3166 country code (e.g., "US", "TW").
+	 *
+	 * @note Includes the null terminator (\0), hence the size of 3.
+	 */
+	char country_code[3];
+	u8 reserved3;
+
+	/**
+	 * @brief The initial transmission rate mask.
+	 */
+	struct wondertap_tx_rate_mask_params tx_rate_mask;
 };
 
 /**
@@ -504,6 +481,9 @@ enum wondertap_ver {
 	WONDER_VERSION_1_2,
 	WONDER_VERSION_1_3,
 	WONDER_VERSION_1_4,
+	WONDER_VERSION_1_4_1,
+	WONDER_VERSION_1_5,
+	WONDER_VERSION_1_5_1,
 	WONDER_VERSION_MAX,
 };
 

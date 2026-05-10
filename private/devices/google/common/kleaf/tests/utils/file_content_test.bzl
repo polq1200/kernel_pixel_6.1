@@ -7,15 +7,12 @@ load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_toolchain")
 def _file_content_test_impl(ctx):
     hermetic_tools = hermetic_toolchain.get(ctx)
 
-    if not ctx.attr.expected and not ctx.attr.expected_content:
-        fail('Either "expected" or "expected_content" is needed.')
-
     if ctx.attr.expected and ctx.attr.expected_content:
         fail('Setting both "expected" and "expected_content" is not allowed.')
 
-    expected = ctx.file.expected
-
-    if ctx.attr.expected_content:
+    if ctx.attr.expected:
+        expected = ctx.file.expected
+    else:
         expected = ctx.actions.declare_file(ctx.attr.name + "/expected")
         ctx.actions.write(output = expected, content = ctx.attr.expected_content)
 

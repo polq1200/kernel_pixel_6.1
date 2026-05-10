@@ -1451,6 +1451,7 @@ typedef struct dhd_pub {
 #endif /* DMAMAP_STATS */
 #ifdef WL_MONITOR
 	bool monitor_enable;
+	bool monitor_iface_up;
 #endif /* WL_MONITOR */
 	/* Last error return */
 	int bcmerror;

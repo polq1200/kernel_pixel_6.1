@@ -275,6 +275,8 @@
 				reset-gpios = <&gpp2 2 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
+				pp1075-supply = <&pp1075_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo1-supply = <&slg51002_ldo1>;
@@ -299,6 +301,8 @@
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
+					"pp1075",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo4",
@@ -314,10 +318,14 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
+					"regulator",
 					"gpio",
 					"pinctrl";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 0
+					 1000
 					 1000
 					 1000
 					 1000
@@ -335,10 +343,14 @@
 					"ldo1",
 					"ldo4",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp1075",
+					"pp3200_bb";
 				power-down-seq-types =
 					"pinctrl",
 					"gpio",
+					"regulator",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator",
@@ -353,7 +365,9 @@
 					 1000
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <0>;
 			};
@@ -377,6 +391,7 @@
 				reset-gpios = <&gpp4 2 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				s2mpg13_ldo24-supply = <&s_ldo24_reg>;
 				gpio3-supply = <&slg51002_gpio3>;
@@ -398,6 +413,7 @@
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio3",
 					"s2mpg13_ldo24",
@@ -407,10 +423,12 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
 					"pinctrl",
 					"gpio";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 1000
 					 1000
@@ -422,10 +440,12 @@
 					"mclk_off",
 					"s2mpg13_ldo24",
 					"gpio3",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
 					"gpio",
 					"pinctrl",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -434,7 +454,8 @@
 					 1000
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <1>;
 			};
@@ -458,6 +479,8 @@
 				reset-gpios = <&gpp6 3 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
+				pp1075-supply = <&pp1075_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio1-supply = <&slg51002_gpio1>;
 				ldo6-supply = <&slg51002_ldo6>;
@@ -479,6 +502,8 @@
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
+					"pp1075",
 					"s2mpg13_ldo12",
 					"gpio1",
 					"ldo6",
@@ -488,10 +513,14 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
+					"regulator",
 					"gpio",
 					"pinctrl";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 0
+					 1000
 					 1000
 					 1000
 					 1000
@@ -503,10 +532,14 @@
 					"reset",
 					"ldo6",
 					"gpio1",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp1075",
+					"pp3200_bb";
 				power-down-seq-types =
 					"pinctrl",
 					"gpio",
+					"regulator",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -515,7 +548,9 @@
 					 1000
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <2>;
 			};
@@ -541,6 +576,8 @@
 					<&gpp13 0 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
+				pp1075-supply = <&pp1075_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo2-supply = <&slg51002_ldo2>;
@@ -564,6 +601,8 @@
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
+					"pp1075",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo2",
@@ -576,13 +615,17 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
+					"regulator",
 					"gpio",
 					"regulator",
 					"regulator",
 					"gpio",
 					"pinctrl";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 0
+					 1000
 					 1000
 					 2500
 					 1000
@@ -600,13 +643,17 @@
 					"shared-afois-reset",
 					"ldo2",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp1075",
+					"pp3200_bb";
 				power-down-seq-types =
 					"pinctrl",
 					"gpio",
 					"regulator",
 					"regulator",
 					"gpio",
+					"regulator",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -618,7 +665,9 @@
 					 2500
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <3>;
 			};
@@ -720,21 +769,25 @@
 				reg-value-bitwidth = <32>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo4-supply = <&slg51002_ldo4>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo4";
 				power-up-seq-types =
 					"regulator",
 					"regulator",
+					"regulator",
 					"regulator";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 1000>;
 
@@ -742,15 +795,18 @@
 				power-down-seqs =
 					"ldo4",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
 				power-down-seq-delays-us =
 					<1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				i2c-lock-group-id = <0>;
 			};
 
@@ -846,12 +902,14 @@
 					<&gpp13 0 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo2-supply = <&slg51002_ldo2>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo2",
@@ -860,9 +918,11 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
 					"gpio";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 2500
 					 1000>;
@@ -872,9 +932,11 @@
 					"shared-afois-reset",
 					"ldo2",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
 					"gpio",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -882,7 +944,8 @@
 					<2500
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				i2c-lock-group-id = <3>;
 			};
 
@@ -938,21 +1001,25 @@
 				reg-value-bitwidth = <32>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo4-supply = <&slg51002_ldo4>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo4";
 				power-up-seq-types =
 					"regulator",
 					"regulator",
+					"regulator",
 					"regulator";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 1000>;
 
@@ -960,15 +1027,18 @@
 				power-down-seqs =
 					"ldo4",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
 				power-down-seq-delays-us =
 					<1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <0>;
 			};
@@ -993,12 +1063,14 @@
 					<&gpp13 0 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo2-supply = <&slg51002_ldo2>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo2",
@@ -1007,9 +1079,11 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
 					"gpio";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 2500
 					 1000>;
@@ -1019,9 +1093,11 @@
 					"shared-afois-reset",
 					"ldo2",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
 					"gpio",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -1029,7 +1105,8 @@
 					<2500
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <1>;
 			};
@@ -1050,21 +1127,25 @@
 				reg-value-bitwidth = <32>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo4-supply = <&slg51002_ldo4>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo4";
 				power-up-seq-types =
 					"regulator",
 					"regulator",
+					"regulator",
 					"regulator";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 1000>;
 
@@ -1072,15 +1153,18 @@
 				power-down-seqs =
 					"ldo4",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
 				power-down-seq-delays-us =
 					<1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <0>;
 			};
@@ -1105,12 +1189,14 @@
 					<&gpp13 0 GPIO_ACTIVE_HIGH>;
 
 				/* Power supplies */
+				pp3200_bb-supply = <&pp3200_bb_cam>;
 				s2mpg13_ldo12-supply = <&s_ldo12_reg>;
 				gpio2-supply = <&slg51002_gpio2>;
 				ldo2-supply = <&slg51002_ldo2>;
 
 				/* Power up sequence */
 				power-up-seqs =
+					"pp3200_bb",
 					"s2mpg13_ldo12",
 					"gpio2",
 					"ldo2",
@@ -1119,9 +1205,11 @@
 					"regulator",
 					"regulator",
 					"regulator",
+					"regulator",
 					"gpio";
 				power-up-seq-delays-us =
-					<1000
+					<0
+					 1000
 					 1000
 					 2500
 					 1000>;
@@ -1131,9 +1219,11 @@
 					"shared-afois-reset",
 					"ldo2",
 					"gpio2",
-					"s2mpg13_ldo12";
+					"s2mpg13_ldo12",
+					"pp3200_bb";
 				power-down-seq-types =
 					"gpio",
+					"regulator",
 					"regulator",
 					"regulator",
 					"regulator";
@@ -1141,7 +1231,8 @@
 					<2500
 					 1000
 					 1000
-					 1000>;
+					 1000
+					 0>;
 				transaction-thread-priority = <99>;
 				i2c-lock-group-id = <1>;
 			};

@@ -61,6 +61,14 @@ wonder_fixed_rate_policy[WONDER_VEN_ATTR_FIXED_TX_RATE_MAX + 1] = {
 };
 
 static const struct nla_policy
+wonder_tx_rate_mask_policy[WONDER_VEN_ATTR_TX_RATE_TEST_MAX + 1] = {
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_TX_RATE_TEST_PREAMBLE),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_TX_RATE_TEST_BW),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_TX_RATE_TEST_NSS),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_TX_RATE_TEST_MCS),
+};
+
+static const struct nla_policy
 wonder_set_reg_policy[WONDER_VEN_ATTR_REG_MAX + 1] = {
 	WONDER_POL_STRING(WONDER_VEN_ATTR_REG_COUNTRY_CODE),
 };
@@ -226,6 +234,41 @@ static int wonder_vendor_cmd_set_fixed_tx_rate(struct wiphy *wiphy,
 	return wondertap_set_fixed_tx_rate(&wonder->wondertap_data, &params);
 }
 
+static int wonder_vendor_cmd_set_tx_rate_test(struct wiphy *wiphy,
+								struct wireless_dev *wdev,
+								const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct wonder_data *wonder = hw->priv;
+	struct nlattr *tb[WONDER_VEN_ATTR_TX_RATE_TEST_MAX + 1];
+	struct wondertap_tx_rate_mask_params tx_rate_params = {};
+
+	if (nla_parse(tb, WONDER_VEN_ATTR_TX_RATE_TEST_MAX, data, data_len,
+					wonder_tx_rate_mask_policy, NULL) < 0) {
+		wonder_error("Failed to parse TX rate mask attributes\n");
+		return -EINVAL;
+	}
+
+	/* Check that all mandatory attributes are present */
+	if (!tb[WONDER_VEN_ATTR_TX_RATE_TEST_PREAMBLE] || !tb[WONDER_VEN_ATTR_TX_RATE_TEST_BW] ||
+		!tb[WONDER_VEN_ATTR_TX_RATE_TEST_NSS] || !tb[WONDER_VEN_ATTR_TX_RATE_TEST_MCS]) {
+		wonder_error("Missing mandatory attributes for TX rate\n");
+		return -EINVAL;
+	}
+
+	// Test only
+	tx_rate_params.max_preamble = nla_get_u32(tb[WONDER_VEN_ATTR_TX_RATE_TEST_PREAMBLE]);
+	tx_rate_params.max_bw = nla_get_u16(tb[WONDER_VEN_ATTR_TX_RATE_TEST_BW]);
+	tx_rate_params.max_nss = nla_get_u8(tb[WONDER_VEN_ATTR_TX_RATE_TEST_NSS]);
+	tx_rate_params.max_mcs = nla_get_u8(tb[WONDER_VEN_ATTR_TX_RATE_TEST_MCS]);
+	wonder_info("Apply TX rate: max_preamble=%u, max_bw=%u, max_nss=%u, max_mcs=%u\n",
+		tx_rate_params.max_preamble, tx_rate_params.max_bw, tx_rate_params.max_nss,
+		tx_rate_params.max_mcs);
+	wondertap_set_tx_rate_mask(&wonder->wondertap_data, &tx_rate_params);
+
+	return 0;
+}
+
 static int wonder_vendor_cmd_set_reg(struct wiphy *wiphy,
 								struct wireless_dev *wdev,
 								const void *data, int data_len)
@@ -286,6 +329,51 @@ static int wonder_vendor_cmd_get_if_mac_addr(struct wiphy *wiphy,
 	return cfg80211_vendor_cmd_reply(skb);
 }
 
+static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
+	struct wireless_dev *wdev,
+	const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct wonder_data *wonder = hw->priv;
+	struct sk_buff *skb;
+	u8 hw_amsdu = wonder->wondertap_data.cap.bits.amsdu_aggregation;
+	u8 hw_ampdu = wonder->wondertap_data.cap.bits.ampdu_aggregation;
+	const size_t reply_skb_size = sizeof(u32) + sizeof(u8)*2;
+
+	if (!wonder->vdev)
+		return -ENODEV;
+
+	wonder_info("Handling GET_CAP. MTU: %u, HW_AMSDU: %u, HW_AMPDU: %u\n",
+		wonder->vdev->mtu, hw_amsdu, hw_ampdu);
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(reply_skb_size));
+	if (!skb) {
+		wonder_error("Failed to allocate reply skb\n");
+		return -ENOMEM;
+	}
+
+	/* Put the MTU length attribute into the skb. */
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_MTU, sizeof(u32), &wonder->vdev->mtu)) {
+		pr_err("Failed to put CAP MTU attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HW_AMSDU, sizeof(u8), &hw_amsdu)) {
+		pr_err("Failed to put CAP HW_AMSDU attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HW_AMPDU, sizeof(u8), &hw_ampdu)) {
+		pr_err("Failed to put CAP HW_AMPDU attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	return cfg80211_vendor_cmd_reply(skb);
+}
+
 static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
 	{
 		.info = {
@@ -317,6 +405,15 @@ static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
 	{
 		.info = {
 			.vendor_id = WONDER_VENDOR_ID,
+			.subcmd = WONDER_VEN_SUBCMD_SET_TX_RATE_TEST
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = wonder_vendor_cmd_set_tx_rate_test,
+		.policy = VENDOR_CMD_RAW_DATA,
+	},
+	{
+		.info = {
+			.vendor_id = WONDER_VENDOR_ID,
 			.subcmd = WONDER_VEN_SUBCMD_SET_REGULATORY
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
@@ -330,6 +427,15 @@ static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
 		.doit = wonder_vendor_cmd_get_if_mac_addr,
+		.policy = VENDOR_CMD_RAW_DATA,
+	},
+	{
+		.info = {
+			.vendor_id = WONDER_VENDOR_ID,
+			.subcmd = WONDER_VEN_SUBCMD_GET_CAP
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = wonder_vendor_cmd_get_cap,
 		.policy = VENDOR_CMD_RAW_DATA,
 	},
 };

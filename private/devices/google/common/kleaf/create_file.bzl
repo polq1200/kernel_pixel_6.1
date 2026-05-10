@@ -11,32 +11,43 @@ def _create_file_impl(ctx):
     srcs = list(ctx.files.srcs)
     out = ctx.outputs.out
 
-    if ctx.attr.content:
-        content_file = ctx.actions.declare_file(ctx.attr.name + "/content")
+    sep = ""
+    if ctx.attr.type == "text":
+        sep = "\n"
+
+    if ctx.attr.contents:
+        contents_file = ctx.actions.declare_file(ctx.attr.name + "/contents")
         ctx.actions.write(
-            output = content_file,
-            content = "\n".join(ctx.attr.content) + "\n",
+            output = contents_file,
+            content = sep.join(ctx.attr.contents),
         )
-        srcs.append(content_file)
+        srcs.append(contents_file)
 
     command = hermetic_tools.setup
 
-    # Create the file even when there is no srcs or content.
+    # Create the file even when there is no srcs or contents.
     command += """
-        touch "{out}"
+        : > "{out}"
     """.format(out = out.path)
 
     # Add newlines between source files.
     command += """
-        echo >> "{out}"
-    """.format(out = out.path).join([
+        echo -n "{sep}" >> "{out}"
+    """.format(sep = sep, out = out.path).join([
         """
         cat "{src}" >> "{out}"
         """.format(src = src.path, out = out.path)
         for src in srcs
     ])
 
+    if ctx.attr.type == "text":
+        # Ensure the file ends with a newline.
+        command += """
+        test -z "$(tail -c 1 "{out}")" || echo "" >> "{out}"
+        """.format(out = out.path)
+
     ctx.actions.run_shell(
+        mnemonic = "CreateFile",
         inputs = srcs,
         tools = hermetic_tools.deps,
         outputs = [out],
@@ -57,8 +68,17 @@ create_file = rule(
             doc = "List of source files which will be concatenated to the output file.",
             allow_files = True,
         ),
-        "content": attr.string_list(
+        "contents": attr.string_list(
             doc = "List of strings which will be appended to the output file after `srcs`.",
+        ),
+        "type": attr.string(
+            doc = (
+                "The type of this file. Default: text\n" +
+                "  text: Add newlines between each srcs and contents and at the end of the file.\n" +
+                "  raw: Concatenate srcs and contents directly.\n"
+            ),
+            values = ["text", "raw"],
+            default = "text",
         ),
     },
     toolchains = [hermetic_toolchain.type],

@@ -1,1 +1,1 @@
-private/devices/google/common/bazel.WORKSPACE
+private/devices/google/common/workspace/root.WORKSPACE

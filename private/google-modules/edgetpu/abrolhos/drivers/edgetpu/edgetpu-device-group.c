@@ -20,6 +20,7 @@
 #include <linux/scatterlist.h>
 #include <linux/sched/mm.h>
 #include <linux/seq_file.h>
+#include <linux/swap.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
@@ -1183,6 +1184,7 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 	struct vm_area_struct **vmas;
 #endif
 	unsigned int foll_flags = FOLL_LONGTERM | FOLL_WRITE;
+	int tried;
 
 	if (size == 0)
 		return ERR_PTR(-EINVAL);
@@ -1269,16 +1271,36 @@ static struct page **edgetpu_pin_user_pages(struct edgetpu_device_group *group,
 		return ERR_PTR(-ENOMEM);
 	}
 #endif
-	mmap_read_lock(current->mm);
+
+	/*
+	 * pin_user_pages may fail due to temporary page reference counts held
+	 * in various areas. Retry under lru_cache_disable to release additional
+	 * reference counts from the LRU cache.
+	 */
+	for (tried = 0; tried < 5; tried++) {
+		if (tried > 0)
+			lru_cache_disable();
+
+		mmap_read_lock(current->mm);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
-	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages, vmas);
+		ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages, vmas);
 #else
-	ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages);
+		ret = pin_user_pages(host_addr & PAGE_MASK, num_pages, foll_flags, pages);
 #endif
-	mmap_read_unlock(current->mm);
+		mmap_read_unlock(current->mm);
+
+		if (tried > 0)
+			lru_cache_enable();
+
+		if (ret == num_pages)
+			break;
+	}
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 	kvfree(vmas);
 #endif
+	if (tried > 0)
+		etdev_info(etdev, "mapping required %d retries with LRU cache disabled", tried);
 	if (ret < 0) {
 		etdev_dbg(etdev, "pin_user_pages failed %u:%pK-%u: %d",
 			  group->workload_id, (void *)host_addr, num_pages,

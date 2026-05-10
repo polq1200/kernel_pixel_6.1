@@ -1390,6 +1390,14 @@ void
 dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t *msg, void *pkt, int ifidx)
 {
 	dhd_info_t *dhd = (dhd_info_t *)dhdp->info;
+
+	if (dhdp->monitor_iface_up == FALSE) {
+		DHD_PRINT(("%s monitor iface is down. dropping the monitor packet\n", __func__));
+		dhd_prhex("[monitor_packet_dump]", (char *)PKTDATA(dhdp->osh, pkt),
+			MIN(PKTLEN(dhdp->osh, pkt), 64), DHD_ERROR_VAL);
+		PKTFREE(dhdp->osh, pkt, FALSE);
+		return;
+	}
 #ifdef HOST_RADIOTAP_CONV
 	if (dhd->host_radiotap_conv) {
 		uint16 len = 0, offset = 0;

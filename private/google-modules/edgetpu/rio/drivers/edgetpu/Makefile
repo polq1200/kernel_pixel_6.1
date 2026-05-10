@@ -4,6 +4,8 @@
 #
 
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+ROOT_DIR ?= $(KERNEL_SRC)/..
+COMMON_OUT_DIR ?= $(OUT_DIR)/..
 M ?= $(shell pwd)
 
 ifndef CONFIG_EDGETPU_TEST

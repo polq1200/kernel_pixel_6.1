@@ -5507,12 +5507,17 @@ dhd_set_monitor_ioctl(dhd_pub_t *dhdp, int ifidx, bool val)
 	if (ret != 0) {
 		DHD_ERROR(("%s Failed to set monitor mode, err %d\n",
 			__FUNCTION__, ret));
+		dhdp->monitor_iface_up = FALSE;
 	} else {
 		DHD_PRINT(("%s monitor mode %s\n",
 			__FUNCTION__, monitor ? "enabled" : "disabled"));
 		dhd->monitor_type[ifidx] = monitor;
 		/* FW will send the packet on 0 interface. so set for 0 interface too */
 		dhd->monitor_type[0] = monitor;
+		/* Set monitor_iface_up here,
+		 * so that if it is FALSE, any Rx packets will be dropped
+		 */
+		dhdp->monitor_iface_up = val;
 	}
 
 	return ret;

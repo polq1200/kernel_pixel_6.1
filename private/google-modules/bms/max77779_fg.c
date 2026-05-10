@@ -102,16 +102,6 @@ static inline int reg_to_seconds(s16 val)
 	return DIV_ROUND_CLOSEST((int) val * 5625, 1000);
 }
 
-static inline int reg_to_vempty(u16 val)
-{
-	return ((val >> 7) & 0x1FF) * 10;
-}
-
-static inline int reg_to_vrecovery(u16 val)
-{
-	return (val & 0x7F) * 40;
-}
-
 static inline int reg_to_capacity_uah(u16 val, struct max77779_fg_chip *chip)
 {
 	return reg_to_micro_amp_h(val, chip->RSense, MAX77779_LSB);
@@ -1790,6 +1780,31 @@ done:
 	return ret;
 }
 
+/* chip->model_lock is acquired by caller */
+static int max77779_fg_aacv_update(struct max77779_fg_chip *chip)
+{
+	struct logbuffer *mon = chip->ce_log;
+	int ret;
+
+	ret = max77779_fg_usr_lock_section(&chip->regmap, MAX77779_FG_ALL_SECTION, false);
+	if (ret) {
+		dev_err(chip->dev, "failed to unlock ret=%d\n", ret);
+		return ret;
+	}
+
+	ret = maxfg_aacv_apply(mon, chip->dev, &chip->regmap, chip->aacv, chip->aacv_vempty);
+	if (ret < 0) {
+		dev_err(chip->dev, "failed to update cutoff voltage (%d)\n", ret);
+		return ret;
+	}
+
+	ret = max77779_fg_usr_lock_section(&chip->regmap, MAX77779_FG_ALL_SECTION, true);
+	if (ret)
+		dev_err(chip->dev, "failed to lock ret=%d\n", ret);
+
+	return ret;
+}
+
 static int max77779_gbms_fg_get_property(struct power_supply *psy,
 					 enum gbms_property psp,
 					 union gbms_propval *val)
@@ -1846,6 +1861,9 @@ static int max77779_gbms_fg_get_property(struct power_supply *psy,
 		break;
 	case GBMS_PROP_AAFV_OFFSET:
 		val->prop.intval = chip->aafv;
+		break;
+	case GBMS_PROP_AACV_OFFSET:
+		val->prop.intval = chip->aacv;
 		break;
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
 		val->prop.intval = maxfg_need_force_fullcharge(chip->ce_log, chip->dev,
@@ -1932,6 +1950,12 @@ static int max77779_gbms_fg_set_property(struct power_supply *psy,
 		rc = max77779_fg_aafv_update(chip);
 		mutex_unlock(&chip->model_lock);
 		break;
+	case GBMS_PROP_AACV_OFFSET:
+		mutex_lock(&chip->model_lock);
+		chip->aacv = val->prop.intval;
+		rc = max77779_fg_aacv_update(chip);
+		mutex_unlock(&chip->model_lock);
+		break;
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
 		rc = maxfg_update_bypass_charge_limit(chip->ce_log, chip->dev, &chip->regmap,
 						      &chip->bypass_chargelimit, val->prop.intval);
@@ -1963,6 +1987,7 @@ static int max77779_gbms_fg_property_is_writeable(struct power_supply *psy,
 	case GBMS_PROP_AAFV_OFFSET:
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
 	case GBMS_PROP_FG_EVENT_LOGGING:
+	case GBMS_PROP_AACV_OFFSET:
 		return 1;
 	default:
 		break;
@@ -3662,6 +3687,9 @@ static int max77779_fg_init_chip(struct max77779_fg_chip *chip)
 			      &chip->aafv_config_limits);
 	if (ret < 0)
 		dev_warn(chip->dev, "Cannot load aafv config(%d)\n", ret);
+
+	/* loading vempty from model_data */
+	chip->aacv_vempty = max77779_get_v_empty(chip->model_data);
 
 	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_FG_INT_STS, &data);
 	if (!ret && data & MAX77779_FG_FG_INT_STS_Br_MASK) {

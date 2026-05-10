@@ -124,8 +124,8 @@ def device_build(
             "//private/devices/google/common/kleaf/files:build.config.common",
         ]
         base_kconfigs = []
-        base_kconfig_exts = []
-        base_defconfig_fragments = []
+        base_kconfig_exts = ["//common:kernel_package_kconfig"]
+        base_defconfig_fragments = ["//common:kernel_package_defconfig_fragment"]
         base_ext_modules = []
         base_ddk_uapi_headers = []
         base_vendor_ramdisk_modules_lists = []
@@ -149,6 +149,7 @@ def device_build(
     target_merged_kernel_uapi_headers = "{}/merged_kernel_uapi_headers".format(name)
     target_ddk_uapi_headers = "{}/ddk_uapi_headers".format(name)
     target_merged_ddk_uapi_headers = "{}/merged_ddk_uapi_headers".format(name)
+    target_cleaned_ddk_uapi_headers = "{}/cleaned_ddk_uapi_headers".format(name)
     target_merged_kernel_and_ddk_uapi_headers = "{}/merged_kernel_and_ddk_uapi_headers".format(name)
     target_vendor_ramdisk_modules_list = "{}/vendor_ramdisk_modules_list".format(name)
     target_system_dlkm_modules_list = "{}/system_dlkm_modules_list".format(name)
@@ -291,6 +292,14 @@ def device_build(
     )
 
     merged_uapi_headers(
+        name = target_cleaned_ddk_uapi_headers,
+        out = "{}/cleaned-ddk-uapi-headers.tar.gz".format(name),
+        clean = True,
+        uapi_headers = [target_ddk_uapi_headers],
+        visibility = ["//visibility:private"],
+    )
+
+    merged_uapi_headers(
         name = target_merged_kernel_and_ddk_uapi_headers,
         uapi_headers = [
             target_merged_kernel_uapi_headers,
@@ -309,7 +318,7 @@ def device_build(
         name = target_system_dlkm_modules_list,
         out = "{}/system_dlkm.modules".format(name),
         # The list is used to filter modules with `grep -w`.
-        content = ["^kernel/" + m for m in PIXEL_GKI_MODULES_LIST],
+        contents = ["^kernel/" + m for m in PIXEL_GKI_MODULES_LIST],
         visibility = ["//visibility:private"],
     )
 
@@ -339,7 +348,7 @@ def device_build(
         name = target_vendor_dlkm_modules_list,
         out = "{}/vendor_dlkm.modules".format(name),
         # The list is used to filter modules with `grep -w`.
-        content = ["^kernel/" + m for m in module_outs] + ["^extra/.*"],
+        contents = ["^kernel/" + m for m in module_outs] + ["^extra/.*"],
         visibility = ["//visibility:private"],
     )
 
@@ -444,6 +453,7 @@ def device_build(
         target_kernel_unstripped_modules_archive,
         target_kmi_symbol_list,
         target_merged_ddk_uapi_headers,
+        target_cleaned_ddk_uapi_headers,
         target_merged_kernel_and_ddk_uapi_headers,
         "//common:kernel_aarch64",
         "//common:kernel_aarch64_headers",
