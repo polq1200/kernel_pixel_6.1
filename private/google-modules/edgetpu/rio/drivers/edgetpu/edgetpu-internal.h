@@ -300,6 +300,15 @@ struct edgetpu_dev {
 	struct mutex wakeup_sources_lock;
 	struct list_head wakeup_sources;
 
+	/*
+	 * The maximum number of edgetpu_clients that can concurrently hold a wakelock.
+	 *
+	 * This value is generally equal to the number of MMU domains that can be attached at once.
+	 * Other limits, such as the number of clients supported by firmware may also be taken into
+	 * account.
+	 */
+	size_t max_concurrent_clients;
+
 	/* true if running on emulation where the TPU is much slower than AP */
 	bool emulation_slow_tpu;
 };

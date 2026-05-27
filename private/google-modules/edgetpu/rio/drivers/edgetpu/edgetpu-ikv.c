@@ -112,6 +112,7 @@ int edgetpu_ikv_init(struct edgetpu_dev *etdev, struct edgetpu_ikv *etikv)
 		.data = etikv,
 	};
 	int ret;
+	size_t max_outstanding_commands;
 
 	etikv->command_timeout_ms = timeout;
 	etikv->etdev = etdev;
@@ -142,6 +143,18 @@ int edgetpu_ikv_init(struct edgetpu_dev *etdev, struct edgetpu_ikv *etikv)
 	if (ret)
 		goto err;
 	spin_lock_init(&etikv->resp_queue_lock);
+
+	max_outstanding_commands =
+		etdev->max_concurrent_clients * EDGETPU_NUM_VII_CREDITS_PER_CLIENT;
+	if (max_outstanding_commands > EDGETPU_IKV_QUEUE_SIZE) {
+		etdev_err(
+			etdev,
+			"too many clients/credits for IKV queue size (clients=%lu, credits=%u, queue=%u)",
+			etdev->max_concurrent_clients, EDGETPU_NUM_VII_CREDITS_PER_CLIENT,
+			EDGETPU_IKV_QUEUE_SIZE);
+		ret = -EINVAL;
+		goto err;
+	}
 
 	args.tx_queue = etikv->cmd_queue_mem.virt_addr;
 	args.rx_queue = etikv->resp_queue_mem.virt_addr;

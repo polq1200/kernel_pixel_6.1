@@ -4186,9 +4186,6 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 	const bool no_battery = chip->fake_battery == 0;
 	void *model_data;
 
-	if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
-		return 0;
-
 	if (no_battery)
 		return 0;
 
@@ -4198,6 +4195,8 @@ static int max1720x_init_model(struct max1720x_chip *chip)
 		pr_debug("node found=%d for ID=%d algo=%d\n",
 			 !!chip->batt_node, chip->batt_id,
 			 chip->drift_data.algo_ver);
+		if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
+			return 0;
 	}
 
 	/* reset state (if needed) */
@@ -5682,10 +5681,9 @@ static int max1720x_init_chip(struct max1720x_chip *chip)
 		dev_err(chip->dev, "Cannot init FG model (%d)\n", ret);
 
 	/* loading default aafv values from device tree */
-	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-		ret = maxfg_aafv_init(chip->batt_node, "maxim,fg-aafv", chip->aafv_cfgs,
-				      &chip->aafv_config_limits);
-	else
+	ret = maxfg_aafv_init(chip->batt_node, "maxim,fg-aafv", chip->aafv_cfgs,
+			      &chip->aafv_config_limits);
+	if (ret < 0)
 		ret = maxfg_aafv_init(chip->dev->of_node, "maxim,fg-aafv", chip->aafv_cfgs,
 				      &chip->aafv_config_limits);
 	if (ret < 0)

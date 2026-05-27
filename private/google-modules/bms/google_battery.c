@@ -2203,6 +2203,10 @@ static void cev_stats_init(struct gbms_charging_event *ce_data,
 	gbms_tier_stats_init(&ce_data->policy_longlife_stats, GBMS_STATS_BD_TI_POLICY_LONGLIFE);
 	gbms_tier_stats_init(&ce_data->policy_force_full_stats, GBMS_STATS_BD_TI_POLICY_FORCE_TO_FULL);
 	gbms_tier_stats_init(&ce_data->eoc_charge_stats, GBMS_STATS_TI_EOC);
+
+	/* Initialize with -1 so the logger ignores entries until they are finalized at EOC */
+	for (i = 0; i < RECHG_STATS_SIZE; i++)
+		gbms_tier_stats_init(&ce_data->full_recharge_stats[i], -1);
 }
 
 static void batt_chg_stats_start(struct batt_drv *batt_drv)
@@ -2350,6 +2354,21 @@ static void batt_chg_stats_update(struct batt_drv *batt_drv, int temp_idx,
 			ce_data->eoc_charge_stats.vtier_idx = GBMS_STATS_TI_EOC;
 		}
 
+		/* Record recharge */
+		if (batt_drv->ssoc_state.sr_state != BATT_SMART_RECHG_TRIGGER &&
+		    batt_drv->ssoc_state.bd_trickle_cnt > 0 &&
+		    batt_drv->ssoc_state.bd_trickle_cnt <= RECHG_STATS_SIZE) {
+			const int stats_idx = batt_drv->ssoc_state.bd_trickle_cnt - 1;
+
+			/* Accumulate data only while the recharge is in progress */
+			if (batt_drv->ssoc_state.bd_trickle_eoc == false)
+				gbms_stats_update_tier(temp_idx, ibatt_ma, temp, elap, cc,
+						       &batt_drv->chg_state, msc_state, soc_in,
+						       &ce_data->full_recharge_stats[stats_idx]);
+			else
+				ce_data->full_recharge_stats[stats_idx].vtier_idx =
+								GBMS_STATS_TI_FULL_RECHARGE;
+		}
 	} else if (msc_state == MSC_HEALTH_PAUSE) {
 
 		/*
@@ -2842,6 +2861,15 @@ static int batt_chg_stats_cstr(char *buff, int size,
 		len += gbms_tier_stats_cstr(&buff[len], size - len,
 					    &ce_data->trickle_stats,
 					    verbose);
+
+	for (i = 0; i < RECHG_STATS_SIZE; i++) {
+		/* Only log entries that successfully reached EOC */
+		if (ce_data->full_recharge_stats[i].soc_in != -1 &&
+		    ce_data->full_recharge_stats[i].vtier_idx == GBMS_STATS_TI_FULL_RECHARGE)
+			len += gbms_tier_stats_cstr(&buff[len], size - len,
+						    &ce_data->full_recharge_stats[i],
+						    verbose);
+	}
 
 	return len;
 }
@@ -13146,7 +13174,7 @@ static void gbatt_reset_curve(struct batt_drv *batt_drv, int ssoc_cap)
 	}
 
 	gbms_logbuffer_prlog(batt_drv->ssoc_log, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG,
-			     "reset curve at gdf=%d.%d cap=%d.%d type=%d\n",
+			     "reset curve at gdf=%d.%d cap=%d.%d type=%d",
 			     qnum_toint(gdf), qnum_fracdgt(gdf),
 			     qnum_toint(cap), qnum_fracdgt(cap),
 			     type);

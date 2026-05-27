@@ -198,8 +198,8 @@ static int edgetpu_mailbox_request_irq(struct edgetpu_mailbox *mailbox, int irq)
 	if (!irq)
 		return 0;
 
-	ret = devm_request_irq(etdev->dev, irq, edgetpu_mailbox_irq_handler, 0,
-			       etdev->dev_name, mailbox);
+	ret = devm_request_irq(etdev->dev, irq, edgetpu_mailbox_irq_handler, 0, etdev->dev_name,
+			       mailbox);
 	if (!ret)
 		mailbox->irq = irq;
 

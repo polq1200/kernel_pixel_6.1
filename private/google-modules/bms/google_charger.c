@@ -246,6 +246,9 @@ struct bd_data {
 	ktime_t bd_pretrigger_stats_last_update;
 	struct gbms_ce_tier_stats bd_resume_stats;
 	ktime_t bd_resume_stats_last_update;
+	struct gbms_ce_tier_stats bd_recharge_stats[RECHG_STATS_SIZE];
+	ktime_t bd_recharge_stats_last_update;
+	int bd_recharge_complete_count;
 
 	/* notify bd_event */
 	struct power_supply *bat_psy;
@@ -379,6 +382,9 @@ struct chg_drv {
 	/* charging policy */
 	struct gvotable_election *charging_policy_votable;
 	int charging_policy;
+	struct gbms_ce_tier_stats policy_longlife_recharge_stats[RECHG_STATS_SIZE];
+	ktime_t policy_longlife_recharge_stats_last_update;
+	int policy_longlife_recharge_complete_count;
 
 	int online;
 	int present;
@@ -496,6 +502,7 @@ static void chg_stats_init(struct gbms_ce_tier_stats *tier, int8_t idx)
 static void bd_dd_stats_init(struct chg_drv *chg_drv)
 {
 	ktime_t now = get_boot_sec();
+	int idx;
 
 	mutex_lock(&chg_drv->stats_lock);
 	/* Dock Defend */
@@ -507,6 +514,16 @@ static void bd_dd_stats_init(struct chg_drv *chg_drv)
 	/* Temp Defend resume */
 	chg_stats_init(&chg_drv->bd_state.bd_resume_stats, GBMS_STATS_BD_TI_TEMP_RESUME);
 	chg_drv->bd_state.bd_resume_stats_last_update = 0;
+	/* Temp Defend Recharge */
+	for (idx = 0; idx < RECHG_STATS_SIZE; idx++)
+		chg_stats_init(&chg_drv->bd_state.bd_recharge_stats[idx],
+			       GBMS_STATS_BD_TI_TEMP_RECHARGE);
+	chg_drv->bd_state.bd_recharge_complete_count = 0;
+	/* Policy Longlife Recharge */
+	for (idx = 0; idx < RECHG_STATS_SIZE; idx++)
+		chg_stats_init(&chg_drv->policy_longlife_recharge_stats[idx],
+			       GBMS_STATS_BD_TI_POLICY_LONGLIFE_RECHARGE);
+	chg_drv->policy_longlife_recharge_complete_count = 0;
 	mutex_unlock(&chg_drv->stats_lock);
 }
 
@@ -1072,8 +1089,9 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 {
 	const int upperbd = chg_drv->charge_stop_level;
 	const int lowerbd = chg_drv->charge_start_level;
+	const int lowerbd_was_reached = chg_drv->lowerbd_reached;
 	bool is_limit_fcc = false;
-	int disable_charging = 0;
+	int idx, disable_charging = 0;
 
 	if (!chg_is_custom_enabled(upperbd, lowerbd))
 		goto done;
@@ -1100,6 +1118,19 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 	} else {
 		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, charging on\n",
 			lowerbd, upperbd, capacity);
+	}
+
+	if (chg_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE && chg_drv->first_ramp_done) {
+		idx = chg_drv->policy_longlife_recharge_complete_count;
+
+		if (chg_drv->lowerbd_reached && idx < RECHG_STATS_SIZE)
+			chg_stats_update(chg_drv, &chg_drv->policy_longlife_recharge_stats[idx],
+					 &chg_drv->policy_longlife_recharge_stats_last_update);
+		mutex_lock(&chg_drv->stats_lock);
+		if (chg_drv->policy_longlife_recharge_stats[idx % RECHG_STATS_SIZE].soc_in != -1 &&
+		    lowerbd_was_reached != chg_drv->lowerbd_reached && !chg_drv->lowerbd_reached)
+			chg_drv->policy_longlife_recharge_complete_count++;
+		mutex_unlock(&chg_drv->stats_lock);
 	}
 
 	/* slow down the charging speed when repeated charging in a certain range */
@@ -1880,8 +1911,8 @@ static bool bd_check_timer_pause(struct chg_drv *chg_drv)
 				chg_drv->bd_state.time_sum);
 		} else {
 			chg_drv->bd_state.bd_time_sum_paused = false;
-			pr_info("MSC_BD: Rseume Elap Timer counting. Device %s %s",
-				chg_status != POWER_SUPPLY_STATUS_NOT_CHARGING ? "resume_charging" : " ",
+			pr_info("MSC_BD: Resume Elap Timer counting. Device %s %s",
+				is_not_charging ? " " : "resume_charging",
 				soc_raw > MAX_BD_PAUSE_SOC ? "high_Soc" : " ");
 		}
 	}
@@ -2005,7 +2036,8 @@ static int bd_update_stats(struct chg_drv *chg_drv, const ktime_t now, bool onli
 static int bd_recharge_logic(struct chg_drv *chg_drv, int val)
 {
 	struct bd_data *bd_state = &chg_drv->bd_state;
-	int lowerbd, upperbd;
+	const int lowerbd_was_reached = bd_state->lowerbd_reached;
+	int lowerbd, upperbd, idx;
 	int disable_charging = 0;
 	bool is_limit_fcc = false;
 
@@ -2053,6 +2085,20 @@ recharge_logic:
 	} else {
 		pr_info("MSC_BD lowerbd=%d, upperbd=%d, val=%d, charging on\n",
 			lowerbd, upperbd, val);
+	}
+
+	if (chg_drv->first_ramp_done) {
+		idx = chg_drv->bd_state.bd_recharge_complete_count;
+
+		if (bd_state->lowerbd_reached && idx < RECHG_STATS_SIZE)
+			chg_stats_update(chg_drv, &bd_state->bd_recharge_stats[idx],
+					 &bd_state->bd_recharge_stats_last_update);
+
+		mutex_lock(&chg_drv->stats_lock);
+		if (bd_state->bd_recharge_stats[idx % RECHG_STATS_SIZE].soc_in != -1 &&
+		    lowerbd_was_reached != bd_state->lowerbd_reached && !bd_state->lowerbd_reached)
+			bd_state->bd_recharge_complete_count++;
+		mutex_unlock(&chg_drv->stats_lock);
 	}
 
 	/* slow down the charging speed when repeated charging in a certain range */
@@ -4254,6 +4300,8 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 	struct gbms_ce_tier_stats *dd_stats = &chg_drv->dd_stats;
 	struct gbms_ce_tier_stats *bd_p_stats = &chg_drv->bd_state.bd_pretrigger_stats;
 	struct gbms_ce_tier_stats *bd_r_stats = &chg_drv->bd_state.bd_resume_stats;
+	struct gbms_ce_tier_stats *rechg_stats;
+	int idx, idx_cnt;
 	uint32_t time_sum;
 	ssize_t len = 0;
 
@@ -4266,6 +4314,20 @@ charge_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_p_stats, false);
 	if (chg_drv->bd_state.bd_resume_stats_last_update > 0)
 		len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, bd_r_stats, false);
+	if (chg_drv->bd_state.bd_recharge_complete_count > 0) {
+		idx_cnt = min(chg_drv->bd_state.bd_recharge_complete_count, RECHG_STATS_SIZE);
+		for (idx = 0; idx < idx_cnt; idx++) {
+			rechg_stats = &chg_drv->bd_state.bd_recharge_stats[idx];
+			len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, rechg_stats, false);
+		}
+	}
+	if (chg_drv->policy_longlife_recharge_complete_count > 0) {
+		idx_cnt = min(chg_drv->policy_longlife_recharge_complete_count, RECHG_STATS_SIZE);
+		for (idx = 0; idx < idx_cnt; idx++) {
+			rechg_stats = &chg_drv->policy_longlife_recharge_stats[idx];
+			len += gbms_tier_stats_cstr(&buf[len], PAGE_SIZE, rechg_stats, false);
+		}
+	}
 	len += scnprintf(&buf[len], PAGE_SIZE - len, "\nD:0x0,%#x,0x0,0x0,0x0,0x0,%#x\n",
 			 chg_drv->adapter_capabilities[ADAPTER_CAP_APDO],
 			 chg_drv->adapter_capabilities[ADAPTER_CAP_PDO]);

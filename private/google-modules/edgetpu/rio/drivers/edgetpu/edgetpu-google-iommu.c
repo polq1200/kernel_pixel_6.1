@@ -423,6 +423,13 @@ void edgetpu_mmu_detach_domain(struct edgetpu_dev *etdev,
 	gcip_domain_pool_detach(&etiommu->domain_pool, etdomain->gdomain);
 }
 
+size_t edgetpu_mmu_get_max_attached_domains(struct edgetpu_dev *etdev)
+{
+	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
+
+	return etiommu->domain_pool.max_pasid - etiommu->domain_pool.min_pasid + 1;
+}
+
 struct edgetpu_iommu_domain *edgetpu_mmu_domain_for_pasid(struct edgetpu_dev *etdev, uint pasid)
 {
 	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;

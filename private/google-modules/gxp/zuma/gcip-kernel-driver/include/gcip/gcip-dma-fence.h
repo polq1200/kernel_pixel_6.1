@@ -56,8 +56,6 @@ struct gcip_dma_fence {
  * @driver_name: The driver name of this fence manager.
  * @name: The name of the fence manager.
  *
- * Memory is allocated as @dev managed so there is no release function of the manager.
- *
  * Return: A pointer to the fence manager on success, or the pointer to a negative errno otherwise.
  */
 struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev, char *driver_name,

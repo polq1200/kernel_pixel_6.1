@@ -429,6 +429,7 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_TI_FULL_CHARGE = 100,
 	GBMS_STATS_TI_HIGH_SOC = 101,
 	GBMS_STATS_TI_EOC = 102,
+	GBMS_STATS_TI_FULL_RECHARGE = 103,
 
 	/* Defender TEMP or DWELL */
 	GBMS_STATS_BD_TI_OVERHEAT_TEMP = 110,
@@ -439,6 +440,8 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_TEMP_RESUME = 115,
 	GBMS_STATS_BD_TI_POLICY_LONGLIFE = 116,
 	GBMS_STATS_BD_TI_POLICY_FORCE_TO_FULL = 117,
+	GBMS_STATS_BD_TI_TEMP_RECHARGE = 118,
+	GBMS_STATS_BD_TI_POLICY_LONGLIFE_RECHARGE = 119,
 
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 	GBMS_STATS_BD_TI_DOCK_CLEARED = 123,
@@ -475,6 +478,8 @@ struct batt_chg_health {
 
 #define CHG_HEALTH_REST_SOC(rest) (((rest)->always_on_soc != -1) ? \
 			(rest)->always_on_soc : (rest)->rest_soc)
+
+#define RECHG_STATS_SIZE 10
 
 /* reset on every charge session */
 struct gbms_charging_event {
@@ -524,6 +529,7 @@ struct gbms_charging_event {
 	struct gbms_ce_tier_stats policy_longlife_stats;
 	struct gbms_ce_tier_stats policy_force_full_stats;
 	struct gbms_ce_tier_stats eoc_charge_stats;
+	struct gbms_ce_tier_stats full_recharge_stats[RECHG_STATS_SIZE];
 };
 
 #define GBMS_CCCM_LIMITS_SET(profile, ti, vi) \
