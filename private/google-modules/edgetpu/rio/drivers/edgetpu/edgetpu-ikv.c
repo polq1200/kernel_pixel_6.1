@@ -55,11 +55,11 @@ static int edgetpu_ikv_alloc_queue(struct edgetpu_ikv *etikv, enum gcip_mailbox_
 	/* Allocate the queues based on the larger litebuf sizes which can handle both formats. */
 	switch (type) {
 	case GCIP_MAILBOX_CMD_QUEUE:
-		size = EDGETPU_IKV_QUEUE_SIZE * VII_CMD_SIZE_BYTES;
+		size = etikv->queue_size * VII_CMD_SIZE_BYTES;
 		mem = &etikv->cmd_queue_mem;
 		break;
 	case GCIP_MAILBOX_RESP_QUEUE:
-		size = EDGETPU_IKV_QUEUE_SIZE * VII_RESP_SIZE_BYTES;
+		size = etikv->queue_size * VII_RESP_SIZE_BYTES;
 		mem = &etikv->resp_queue_mem;
 		break;
 	}
@@ -73,7 +73,7 @@ static int edgetpu_ikv_alloc_queue(struct edgetpu_ikv *etikv, enum gcip_mailbox_
 		return ret;
 
 	ret = edgetpu_mailbox_set_queue(etikv->mbx_hardware, type, mem->dma_addr,
-					EDGETPU_IKV_QUEUE_SIZE);
+					etikv->queue_size);
 	if (ret) {
 		etdev_err(etikv->etdev, "failed to set mailbox queue: %d", ret);
 		edgetpu_iremap_free(etdev, mem);
@@ -112,8 +112,8 @@ int edgetpu_ikv_init(struct edgetpu_dev *etdev, struct edgetpu_ikv *etikv)
 		.data = etikv,
 	};
 	int ret;
-	size_t max_outstanding_commands;
 
+	etikv->queue_size = etdev->max_concurrent_clients * EDGETPU_NUM_VII_CREDITS_PER_CLIENT;
 	etikv->command_timeout_ms = timeout;
 	etikv->etdev = etdev;
 	mutex_init(&etikv->enabled_pasids_lock);
@@ -143,18 +143,6 @@ int edgetpu_ikv_init(struct edgetpu_dev *etdev, struct edgetpu_ikv *etikv)
 	if (ret)
 		goto err;
 	spin_lock_init(&etikv->resp_queue_lock);
-
-	max_outstanding_commands =
-		etdev->max_concurrent_clients * EDGETPU_NUM_VII_CREDITS_PER_CLIENT;
-	if (max_outstanding_commands > EDGETPU_IKV_QUEUE_SIZE) {
-		etdev_err(
-			etdev,
-			"too many clients/credits for IKV queue size (clients=%lu, credits=%u, queue=%u)",
-			etdev->max_concurrent_clients, EDGETPU_NUM_VII_CREDITS_PER_CLIENT,
-			EDGETPU_IKV_QUEUE_SIZE);
-		ret = -EINVAL;
-		goto err;
-	}
 
 	args.tx_queue = etikv->cmd_queue_mem.virt_addr;
 	args.rx_queue = etikv->resp_queue_mem.virt_addr;
@@ -187,12 +175,12 @@ int edgetpu_ikv_reinit(struct edgetpu_ikv *etikv)
 	edgetpu_mailbox_clear_doorbells(mbx_hardware);
 
 	ret = edgetpu_mailbox_set_queue(mbx_hardware, GCIP_MAILBOX_CMD_QUEUE,
-					cmd_queue_mem->dma_addr, EDGETPU_IKV_QUEUE_SIZE);
+					cmd_queue_mem->dma_addr, etikv->queue_size);
 	if (ret)
 		return ret;
 
 	ret = edgetpu_mailbox_set_queue(mbx_hardware, GCIP_MAILBOX_RESP_QUEUE,
-					resp_queue_mem->dma_addr, EDGETPU_IKV_QUEUE_SIZE);
+					resp_queue_mem->dma_addr, etikv->queue_size);
 	if (ret)
 		return ret;
 

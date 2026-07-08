@@ -561,7 +561,7 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 	u16 vfsoc_addr, avcap_addr, repcap_addr, fullcap_addr, fullcaprep_addr, fullcapnom_addr;
 	u16 qh0_addr, qh_addr, dqacc_addr, dpacc_addr, fstat_addr, qresidual_addr, rcomp0_addr;
 	u16 cycles_addr, learncfg_addr, tempco_addr, filtercfg_addr, mixcap_addr, vfremcap_addr;
-	u16 vcell_addr, ibat_addr;
+	u16 vcell_addr, ibat_addr, temp, temp_addr;
 	int ret, len;
 
 	ret = maxfg_reg_read_addr(map, MAXFG_TAG_vfsoc, &vfsoc, &vfsoc_addr);
@@ -648,17 +648,22 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 	if (ret < 0)
 		return ret;
 
-	len = scnprintf(&buf[0], PAGE_SIZE, "%02X:%04X %02X:%04X %02X:%04X %02X:%04X"
+	ret = maxfg_reg_read_addr(map, MAXFG_TAG_temp, &temp, &temp_addr);
+	if (ret < 0)
+		return ret;
+
+	len = scnprintf(&buf[0], PAGE_SIZE,
+			"%02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
 			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X"
-			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X",
-			vfsoc_addr, vfsoc, avcap_addr, avcap, repcap_addr, repcap,
-			fullcap_addr, fullcap, fullcaprep_addr, fullcaprep,
-			fullcapnom_addr, fullcapnom, qh0_addr, qh0, qh_addr, qh, dqacc_addr, dqacc,
-			dpacc_addr, dpacc, qresidual_addr, qresidual, fstat_addr, fstat,
-			learncfg_addr, learncfg, tempco_addr, tempco, filtercfg_addr, filtercfg,
-			mixcap_addr, mixcap, vfremcap_addr, vfremcap, vcell_addr, vcell,
-			ibat_addr , ibat, rcomp0_addr, rcomp0, cycles_addr, cycles);
+			" %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X %02X:%04X",
+			vfsoc_addr, vfsoc, avcap_addr, avcap, repcap_addr, repcap, fullcap_addr,
+			fullcap, fullcaprep_addr, fullcaprep, fullcapnom_addr, fullcapnom, qh0_addr,
+			qh0, qh_addr, qh, dqacc_addr, dqacc, dpacc_addr, dpacc, qresidual_addr,
+			qresidual, fstat_addr, fstat, learncfg_addr, learncfg, tempco_addr, tempco,
+			filtercfg_addr, filtercfg, mixcap_addr, mixcap, vfremcap_addr, vfremcap,
+			vcell_addr, vcell, ibat_addr, ibat, rcomp0_addr, rcomp0, cycles_addr,
+			cycles, temp_addr, temp);
 
 	return len;
 }

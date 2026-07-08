@@ -446,6 +446,22 @@ enum gbms_stats_tier_idx_t {
 	GBMS_STATS_BD_TI_TRICKLE_CLEARED = 122,
 	GBMS_STATS_BD_TI_DOCK_CLEARED = 123,
 	GBMS_STATS_TEMP_FILTER = 124,
+	GBMS_STATS_BD_TI_DWELL_V1P5_STAGE1 = 125,
+	GBMS_STATS_BD_TI_DWELL_V1P5_STAGE2 = 126,
+};
+
+/* Definition should be synced to HLOS BatteryDefender.h */
+enum dwell_defend_state {
+	STATE_INIT,
+	STATE_DISABLED,
+	STATE_DISCONNECTED,
+	STATE_CONNECTED,
+	STATE_ACTIVE_HOLD,
+	STATE_ACTIVE_1,
+	STATE_ACTIVE_2,
+	STATE_ACTIVE_3,
+	STATE_ACTIVE_NOSPOOF,
+	STATE_COUNT,
 };
 
 /* health state */
@@ -526,6 +542,8 @@ struct gbms_charging_event {
 	struct gbms_ce_tier_stats cc_lvl_stats;
 	struct gbms_ce_tier_stats trickle_stats;
 	struct gbms_ce_tier_stats temp_filter_stats;
+	struct gbms_ce_tier_stats dwell_stage1_stats;
+	struct gbms_ce_tier_stats dwell_stage2_stats;
 	struct gbms_ce_tier_stats policy_longlife_stats;
 	struct gbms_ce_tier_stats policy_force_full_stats;
 	struct gbms_ce_tier_stats eoc_charge_stats;
@@ -1064,6 +1082,7 @@ enum spoof_soc_reason {
 	SPOOF_SOC_CHARGING_POLICY,
 	SPOOF_SOC_ADAPTIVE_CHARGING,
 	SPOOF_SOC_TEMP_DEFEND,
+	SPOOF_SOC_DWELL_DEFEND,
 };
 
 enum bpst_batt_status {

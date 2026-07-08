@@ -2462,9 +2462,6 @@ struct bcm_cfg80211 {
 	uint32 actfrm_fail_cnt;
 	u8 feature_mask[CFG80211_FEAT_MAX_LEN];
 	bool feature_mask_init_done;
-#ifdef DHD_ART
-	u8 art_bssid[ETHER_ADDR_LEN]; /* BSSID filter */
-#endif /* DHD_ART */
 };
 
 typedef struct wl_multink_config {

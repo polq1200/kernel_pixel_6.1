@@ -12,6 +12,7 @@
 #include <linux/etherdevice.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <net/mac80211.h>
 
 #include "include/wonder/wondertap.h"
 #include "wondertap_internal.h"
@@ -138,7 +139,8 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 			wonder_info("Vendor init successful. State set to UP.\n");
 
 			if (_params->channel_hopping_enable &&
-			    wondertap_ops->channel_schedule_request) {
+			    wondertap_ops->channel_schedule_request &&
+			    wondertap->cached_channel_schedule.channel_list_len > 0) {
 				struct wondertap_capability caps;
 				u32 delta = 0;
 				u32 mac_tsf;
@@ -377,7 +379,6 @@ int wondertap_channel_schedule_request(struct wondertap_data *wondertap,
 			if (!cached_schedule->channel_list) {
 				wonder_error("Failed to allocate memory for channel list\n");
 				cached_schedule->channel_list_len = 0;
-				wondertap->cache_flags &= ~WONDERTAP_CACHE_CHANNEL_SCHEDULE_SET;
 				ret = -ENOMEM;
 				goto out_unlock;
 			}
@@ -393,16 +394,20 @@ int wondertap_channel_schedule_request(struct wondertap_data *wondertap,
 	if (request->channel_list && request->channel_list_len > 0)
 		memcpy(cached_schedule->channel_list, request->channel_list, list_size);
 
-	wondertap->cache_flags |= WONDERTAP_CACHE_CHANNEL_SCHEDULE_SET;
-
 	if (wondertap_is_up(wondertap)) {
-		if (wondertap_ops && wondertap_ops->channel_schedule_request) {
-			ret = wondertap_ops->channel_schedule_request(wondertap->vendor_handle,
-								      request);
+		if (request->channel_list_len > 0) {
+			if (wondertap_ops && wondertap_ops->channel_schedule_request) {
+				ret = wondertap_ops->channel_schedule_request(
+									wondertap->vendor_handle,
+									request);
+			} else {
+				wonder_error(
+					"Vendor ops 'channel_schedule_request' not implemented\n");
+				ret = -EOPNOTSUPP;
+			}
 		} else {
-			wonder_error(
-				"Vendor operation 'channel_schedule_request' is not implemented\n");
-			ret = -EOPNOTSUPP;
+			wonder_warn(
+				"Channel list is empty. Skip sending cached schedule to vendor\n");
 		}
 	} else {
 		wonder_warn("wondertap is inactive, caching incoming schedule settings.\n");
@@ -467,6 +472,34 @@ int wondertap_get_channel_status_report(struct wondertap_data *wondertap,
 
 	if (ret)
 		pr_err("Get channel status report failed %d.\n", ret);
+
+out_unlock:
+	mutex_unlock(&wondertap->lock);
+	return ret;
+}
+
+int wondertap_set_station_info(struct wondertap_data *wondertap,
+		const enum wondertap_station_action action,
+		struct wondertap_station_info *info)
+{
+	int ret = 0;
+
+	mutex_lock(&wondertap->lock);
+
+	if (!wondertap_is_up(wondertap)) {
+		pr_warn("wondertap is inactive.\n");
+		ret = -ENODEV;
+		goto out_unlock;
+	}
+
+	if (!wondertap->wonder_ops || !wondertap->wonder_ops->set_station_info) {
+		pr_warn("wondertap is inactive.\n");
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	ret = wondertap->wonder_ops->set_station_info(
+		wondertap->vendor_handle, action, info);
 
 out_unlock:
 	mutex_unlock(&wondertap->lock);

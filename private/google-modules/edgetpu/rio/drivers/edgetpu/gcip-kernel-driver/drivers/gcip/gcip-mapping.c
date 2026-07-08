@@ -838,6 +838,16 @@ static struct sg_table *gcip_mapping_dmabuf_map_sgt_to_iova(struct gcip_iommu_do
 		goto err_destroy_sgt;
 	}
 
+	/*
+	 * If DMA_ATTR_PRIVILEGED is set in the attrs provided by the heap exporter then this
+	 * mapping is from the system-uncached heap. That attr signalled the SMMU driver to remove
+	 * shareability/IOMMU_CACHE from the default domain mapping (if it was requested), since
+	 * this is invalid (and tends to hit bogus AP cache lines). Also turn off coherency/
+	 * IOMMU_CACHE in our per-context mapping.
+	 */
+	if (attachment->dma_map_attrs & DMA_ATTR_PRIVILEGED)
+		gcip_map_flags &= ~BIT(GCIP_MAP_FLAGS_DMA_COHERENT_OFFSET);
+
 	nents_mapped = gcip_iommu_domain_map_sgt_to_iova(domain, sgt_ret, iova, &gcip_map_flags);
 	if (!nents_mapped) {
 		ret = -ENOSPC;

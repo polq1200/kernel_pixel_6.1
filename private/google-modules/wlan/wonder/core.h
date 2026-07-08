@@ -38,10 +38,15 @@ struct wonder_data {
 	u8 data_version;
 	enum nl80211_iftype iftype;
 	unsigned int config_filters;
-	bool tx_stop;
+	bool ampdu_enable;
+	bool amsdu_enable;
+	bool channel_hopping_enable;
+	u32 amsdu_threshold;
+	u32 amsdu_delay;
 	struct wondertap_data wondertap_data;
 	struct work_struct pdev_down_work;
 	struct notifier_block netdev_notifier;
+	struct delayed_work tx_work;
 };
 
 static inline void hexdump(const char *pfx, unsigned char *msg, int msglen)

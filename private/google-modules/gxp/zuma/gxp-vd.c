@@ -659,7 +659,7 @@ static int gxp_attach_mmu_domain(struct gxp_dev *gxp, struct gxp_virtual_device 
 	/* Ignore the return value of this put function, just print messages on error. */
 	err = pm_runtime_put_sync(gxp->dev);
 	if (err)
-		dev_err(gxp->dev, "Failed to power off during domain attach: %d", err);
+		dev_warn(gxp->dev, "pm_runtime_put_sync during domain attach returned %d", err);
 
 	return ret;
 }
@@ -681,10 +681,9 @@ static int gxp_detach_mmu_domain(struct gxp_dev *gxp, struct gxp_virtual_device 
 	gxp_dma_domain_detach_device(gxp, vd->domain, vd->core_list);
 	ret = pm_runtime_put_sync(gxp->dev);
 	if (ret)
-		dev_err(gxp->dev, "Failed to power off during domain attach: %d", ret);
+		dev_warn(gxp->dev, "pm_runtime_put_sync during domain attach returned %d", ret);
 
-	return ret;
-
+	return 0;
 }
 #endif /* GXP_MMU_REQUIRE_ATTACH */
 

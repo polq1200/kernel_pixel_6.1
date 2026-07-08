@@ -2129,6 +2129,7 @@ static int link_load_gnss_image(struct link_device *ld,
 	void __user *src;
 
 	int ret = 0;
+	unsigned int gnss_shmem_size = 0;
 	struct mem_link_device *mld = to_mem_link_device(ld);
 
 	memset(&img, 0, sizeof(struct gnss_image));
@@ -2146,12 +2147,20 @@ static int link_load_gnss_image(struct link_device *ld,
 		return ret;
 	}
 
+	gnss_shmem_size = cp_shmem_get_size(0, SHMEM_GNSS_FW);
+
 	dst = (void __iomem *)(mld->gnss_v_base + img.offset);
 	src = (void __user *)((unsigned long)img.firmware_bin);
 	ret = copy_from_user_memcpy_toio(dst, src, img.firmware_size);
 	if (ret) {
 		mif_err("copy_from_user_memcpy_toio() fail:%d\n", ret);
 		return ret;
+	}
+
+	if (img.offset + img.firmware_size > gnss_shmem_size) {
+		mif_err("GNSS load OOB (offset: %#x, size: %#x, shmem_size: %#x)!\n",
+				img.offset, img.firmware_size, gnss_shmem_size);
+		return -EINVAL;
 	}
 
 	return ret;

@@ -216,10 +216,8 @@ static int try_force_power_domain_reboot(struct edgetpu_dev *etdev)
 	}
 
 	ret = pm_runtime_put_sync(etdev->dev);
-	if (ret) {
-		etdev_err(etdev, "pm_runtime_put failed for forced reboot %d", ret);
-		return ret;
-	}
+	if (ret)
+		etdev_warn(etdev, "forced reboot pm_runtime_put_sync returned %d", ret);
 
 	do {
 		if (edgetpu_poll_block_off(etdev))
@@ -440,10 +438,8 @@ static int do_power_down(struct edgetpu_dev *etdev)
 	res = pm_runtime_put_sync(etdev->dev);
 	edgetpu_eventlog_event(etdev, EVENTLOG_EVENT_POWER_RPMDONE,
 			       (void *)edgetpu_soc_pm_is_block_off(etdev));
-	if (res) {
-		etdev_err(etdev, "pm_runtime_put_sync returned %d\n", res);
-		return res;
-	}
+	if (res)
+		etdev_warn(etdev, "power down: pm_runtime_put_sync returned %d\n", res);
 
 	edgetpu_soc_pm_power_down(etdev);
 

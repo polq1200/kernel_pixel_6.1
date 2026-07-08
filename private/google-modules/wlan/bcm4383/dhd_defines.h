@@ -525,7 +525,7 @@
 		#if IS_ENABLED(CONFIG_SOC_LGA)
 			#if defined(BCMDHD) && (BCMDHD == 4383)
 				#define DHD_TREAT_D2H_CTO_AS_LINKDOWN
-				#define DHD_ENABLE_L1SS_FROM_PM_COMPLETE
+				#define DHD_DEFER_L1SS_ENABLE_IN_RESUME
 			#endif
 		#endif
 		/* Skip xorcsum for high throughput case */
