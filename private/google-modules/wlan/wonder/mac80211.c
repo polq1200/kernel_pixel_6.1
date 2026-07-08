@@ -94,7 +94,7 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 
 	/* Filtering */
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
-	hdr = (struct ieee80211_hdr *)(skb->data + radhdr->it_len);
+	hdr = (struct ieee80211_hdr *)(skb->data + le16_to_cpu(radhdr->it_len));
 	if (IS_ENABLED(CONFIG_WONDER_RX_DEBUG)) {
 		wonder_error("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x,"
 			"radhdr_len: %d\n", __func__, skb->dev->name, skb->protocol, radhdr->it_len);
@@ -428,14 +428,12 @@ static rx_handler_result_t wonder_rx_adhoc_handler(struct wonder_data *wonder,
 	 * Need to change pkt_type since the default type from montor mode is
 	 * PACKET_OTHERHOST.
 	 */
-	if (ieee80211_is_data(hdr->frame_control)) {
+	if (ieee80211_is_data(hdr->frame_control))
 		skb->pkt_type = PACKET_HOST;
-	}
 
 	/* Vendor specific RX handler */
-	if (IS_ENABLED(CONFIG_WONDER_SYNA_SUPPORT)) {
+	if (wonder->syna_support_enable)
 		syna_rx_handler(wonder, skb);
-	}
 
 	/* Fill RX status for mac80211 operation */
 	memset(rx_status, 0, sizeof(*rx_status));
@@ -605,7 +603,7 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
 	radhdr->it_version = 0;
 	radhdr->it_pad = 0;
-	radhdr->it_len = sizeof(struct ieee80211_radiotap_header) + 1;
+	radhdr->it_len = cpu_to_le16(sizeof(struct ieee80211_radiotap_header) + 1);
 	/* Assign the skb to the physical device for transmission */
 	skb->dev = pdev;
 	/* Report Fake TX status to adjust Rate and AMSDU length */
@@ -1006,38 +1004,57 @@ static void wonder_flush_sta(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 }
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0) */
 
+static void wonder_sta_update_worker(struct work_struct *work)
+{
+	struct wonder_sta_update_work *swork =
+		container_of(work, struct wonder_sta_update_work, work);
+
+	wondertap_set_station_info(&swork->wonder->wondertap_data,
+				   swork->action, &swork->sta_info);
+	kfree(swork);
+}
+
 static int wonder_update_station_state(struct ieee80211_hw *hw,
 			struct ieee80211_sta *sta,
 			enum wondertap_station_action action)
 {
-	struct wondertap_station_info sta_info;
+	struct wonder_sta_update_work *swork;
 	struct ieee80211_link_sta *link_sta = &sta->deflink;
 	struct wonder_data *wonder = hw->priv;
+	struct wondertap_station_info *sta_info;
 
-	memset(&sta_info, 0, sizeof(sta_info));
-	sta_info.aid = sta->aid;
-	memcpy(sta_info.mac, sta->addr, ETH_ALEN);
+	swork = kzalloc(sizeof(*swork), GFP_ATOMIC);
+	if (!swork)
+		return -ENOMEM;
+
+	INIT_WORK(&swork->work, wonder_sta_update_worker);
+	swork->wonder = wonder;
+	swork->action = action;
+	sta_info = &swork->sta_info;
+	sta_info->aid = sta->aid;
+	memcpy(sta_info->mac, sta->addr, ETH_ALEN);
 
 	if (link_sta->ht_cap.ht_supported) {
-		sta_info.ht_capa.cap_info = link_sta->ht_cap.cap;
-		sta_info.ht_capa.ampdu_params_info = 0x1f;
-		sta_info.ht_capa.mcs = link_sta->ht_cap.mcs;
-		sta_info.capability_mask |= BIT(WONDERTAP_STATION_CAP_HT);
+		sta_info->ht_capa.cap_info = link_sta->ht_cap.cap;
+		sta_info->ht_capa.ampdu_params_info = 0x1f;
+		sta_info->ht_capa.mcs = link_sta->ht_cap.mcs;
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_HT);
 	}
 
 	if (link_sta->vht_cap.vht_supported) {
-		sta_info.vht_capa.vht_cap_info = link_sta->vht_cap.cap;
-		sta_info.vht_capa.supp_mcs = link_sta->vht_cap.vht_mcs;
-		sta_info.capability_mask |= BIT(WONDERTAP_STATION_CAP_VHT);
+		sta_info->vht_capa.vht_cap_info = link_sta->vht_cap.cap;
+		sta_info->vht_capa.supp_mcs = link_sta->vht_cap.vht_mcs;
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_VHT);
 	}
 
 	if (link_sta->he_cap.has_he) {
-		sta_info.he_capa = link_sta->he_cap.he_cap_elem;
-		sta_info.he_capa_len = sizeof(link_sta->he_cap.he_cap_elem);
-		sta_info.capability_mask |= BIT(WONDERTAP_STATION_CAP_HE);
+		sta_info->he_capa = link_sta->he_cap.he_cap_elem;
+		sta_info->he_capa_len = sizeof(link_sta->he_cap.he_cap_elem);
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_HE);
 	}
 
-	return wondertap_set_station_info(&wonder->wondertap_data, action, &sta_info);
+	schedule_work(&swork->work);
+	return 0;
 }
 
 static int wonder_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
@@ -1238,6 +1255,7 @@ void *wonder_mac80211_init(void)
 	wonder->channel_hopping_enable = false;
 	wonder->amsdu_threshold = 8000;
 	wonder->amsdu_delay = 3000;
+	wonder->syna_support_enable = false;
 	/* Set Band Capabilities */
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = &wonder_band_2ghz;
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = &wonder_band_5ghz;

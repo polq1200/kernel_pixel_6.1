@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="aosp" fetch="https://android.googlesource.com/"/>
-  <default revision="android-gs-caimito-6.1-android17-qpr1-beta" remote="aosp" sync-c="true" sync-j="32"/>
+  <default revision="android-gs-shusky-6.1-android17-qpr1-beta" remote="aosp" sync-c="true" sync-j="32"/>
   <project path="common/ack" name="kernel/common" groups="partner">
     <linkfile dest="common/build.config.constants" src="build.config.constants"/>
     <linkfile dest="common/modules.bzl" src="modules.bzl"/>

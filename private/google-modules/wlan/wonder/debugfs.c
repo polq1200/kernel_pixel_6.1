@@ -268,6 +268,8 @@ int wonder_debugfs_init(void *wonder)
 			    &((struct wonder_data *)wonder)->amsdu_threshold);
 	debugfs_create_u32("amsdu_delay", 0644, wonder_debugfs_root,
 			    &((struct wonder_data *)wonder)->amsdu_delay);
+	debugfs_create_bool("syna_support_enable", 0644, wonder_debugfs_root,
+			    &((struct wonder_data *)wonder)->syna_support_enable);
 	return 0;
 }
 

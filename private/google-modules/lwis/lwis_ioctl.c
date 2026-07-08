@@ -1421,6 +1421,22 @@ static int cmd_transaction_submit(struct lwis_client *client, struct lwis_cmd_pk
 		goto err_free_cmd;
 	}
 
+	if (k_transaction->info.num_io_entries > 0) {
+		struct lwis_io_bundle *bundle = lwis_allocator_allocate(
+			lwis_dev, sizeof(struct lwis_io_bundle), GFP_KERNEL);
+		if (!bundle) {
+			ret = -ENOMEM;
+			lwis_transaction_free(lwis_dev, &k_transaction);
+			goto err_free_cmd;
+		}
+		atomic_set(&bundle->refcount, 1);
+		bundle->num_io_entries = k_transaction->info.num_io_entries;
+		bundle->io_entries = k_transaction->info.io_entries;
+		k_transaction->bundle = bundle;
+	} else {
+		k_transaction->bundle = NULL;
+	}
+
 	k_transaction->legacy_lwis_fence = (header->cmd_id == LWIS_CMD_ID_TRANSACTION_SUBMIT_V6 ||
 					    header->cmd_id == LWIS_CMD_ID_TRANSACTION_SUBMIT_V5 ||
 					    header->cmd_id == LWIS_CMD_ID_TRANSACTION_SUBMIT_V4);
