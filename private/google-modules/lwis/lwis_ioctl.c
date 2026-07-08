@@ -840,8 +840,10 @@ static int cmd_device_resume(struct lwis_client *lwis_client, struct lwis_cmd_pk
 	lwis_client_event_queue_clear(lwis_client);
 	lwis_client_error_event_queue_clear(lwis_client);
 
+	lwis_bus_manager_lock_bus(lwis_dev);
 	ret = lwis_dev_process_power_sequence(lwis_dev, lwis_dev->resume_sequence,
 					      /*set_active=*/true, /*skip_error=*/false);
+	lwis_bus_manager_unlock_bus(lwis_dev);
 	if (ret) {
 		dev_err(lwis_dev->dev, "Error lwis_dev_process_power_sequence (%d)\n", ret);
 		goto exit_locked;

@@ -372,7 +372,7 @@ err_unpin_page:
  * @dir: The DMA direction of the mapping.
  * @mm: The mm_struct to maintain pinned_vm.
  *
- * If the @sgt has never been mapped, pass DMA_NONE for @dir to skip set_page_dirty().
+ * If the @sgt has never been mapped, pass DMA_NONE for @dir to skip set_page_dirty_lock().
  */
 static void gcip_mapping_buffer_sgt_destroy(struct sg_table *sgt, enum dma_data_direction dir,
 					    struct mm_struct *mm)
@@ -384,7 +384,7 @@ static void gcip_mapping_buffer_sgt_destroy(struct sg_table *sgt, enum dma_data_
 	for_each_sg_page(sgt->sgl, &sg_iter, sgt->orig_nents, 0) {
 		page = sg_page_iter_page(&sg_iter);
 		if (dir == DMA_FROM_DEVICE || dir == DMA_BIDIRECTIONAL)
-			set_page_dirty(page);
+			set_page_dirty_lock(page);
 		unpin_user_page(page);
 		num_pages++;
 	}
