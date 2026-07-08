@@ -3206,7 +3206,8 @@ static ssize_t set_charge_stop_level(struct device *dev,
 	    (val > DEFAULT_CHARGE_STOP_LEVEL))
 		return -EINVAL;
 
-	pr_info("%s: %d -> %d\n", __func__, chg_drv->charge_stop_level, val);
+	gbms_logbuffer_prlog(chg_drv->bd_state.bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			     "CHG_LEVEL: stop %d -> %d", chg_drv->charge_stop_level, val);
 	chg_drv->charge_stop_level = val;
 
 	/* Force update charging state vote */
@@ -3251,7 +3252,8 @@ static ssize_t set_charge_start_level(struct device *dev,
 	    (val < DEFAULT_CHARGE_START_LEVEL))
 		return -EINVAL;
 
-	pr_info("%s: %d -> %d\n", __func__, chg_drv->charge_start_level, val);
+	gbms_logbuffer_prlog(chg_drv->bd_state.bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			     "CHG_LEVEL: start %d -> %d", chg_drv->charge_start_level, val);
 	chg_drv->charge_start_level = val;
 
 	/* Force update charging state vote */
@@ -4810,7 +4812,7 @@ static int msc_last_cb(struct gvotable_election *el, const char *reason, void *v
 
 }
 
-static void chg_update_charging_policy(struct chg_drv *chg_drv, const int value)
+static void chg_update_charging_policy(struct chg_drv *chg_drv, const char *reason, const int value)
 {
 	/* set custom upper and lower bound for long_life charging policy */
 	if (value == CHARGING_POLICY_VOTE_LONGLIFE &&
@@ -4825,6 +4827,13 @@ static void chg_update_charging_policy(struct chg_drv *chg_drv, const int value)
 		chg_update_charging_state(chg_drv, false, false);
 	}
 
+	/* ignore logging the init case where charging_policy == 0 */
+	if (chg_drv->charging_policy != 0)
+		gbms_logbuffer_prlog(chg_drv->bd_state.bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				     "CHG_LEVEL: policy %d->%d(%s), level %d-%d",
+				     chg_drv->charging_policy, value, reason,
+				     chg_drv->charge_start_level, chg_drv->charge_stop_level);
+
 	chg_drv->charging_policy = value;
 }
 
@@ -4837,7 +4846,7 @@ static int charging_policy_cb(struct gvotable_election *el,
 	if (!chg_drv || chg_drv->charging_policy == charging_policy)
 		return 0;
 
-	chg_update_charging_policy(chg_drv, charging_policy);
+	chg_update_charging_policy(chg_drv, reason, charging_policy);
 
 	if (chg_drv->bat_psy)
 		power_supply_changed(chg_drv->bat_psy);

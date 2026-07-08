@@ -7,6 +7,7 @@
  */
 
 #include "linux/cpumask.h"
+#include "linux/delay.h"
 #include "linux/spinlock.h"
 #include <linux/kobject.h>
 #include <linux/module.h>
@@ -19,6 +20,11 @@
 
 #include "../../include/pixel_mm_hint.h"
 #include "../../include/pixel_mm.h"
+
+#define READ_SWAP_CACHE_ASYNC_SPIN_COUNT 8
+#define READ_SWAP_CACHE_ASYNC_DELAY_US 5
+#define READ_SWAP_CACHE_ASYNC_SLEEP_MIN 10
+#define READ_SWAP_CACHE_ASYNC_SLEEP_MAX 15
 
 static struct task_struct *tsk_kswapd, *tsk_kcompactd;
 
@@ -281,6 +287,20 @@ static ssize_t deferred_free_thread_nice_store(struct kobject *kobj,
 
 VENDOR_MM_RW(deferred_free_thread_nice);
 
+static void rvh_read_swap_cache_async_schedule_timeout(void *data, size_t *count, bool *skip)
+{
+	*skip = true;
+
+	//spin before sleep
+	if (*count < READ_SWAP_CACHE_ASYNC_SPIN_COUNT) {
+		*count = *count + 1;
+		udelay(READ_SWAP_CACHE_ASYNC_DELAY_US);
+		return;
+	}
+
+	usleep_range(READ_SWAP_CACHE_ASYNC_SLEEP_MIN, READ_SWAP_CACHE_ASYNC_SLEEP_MAX);
+}
+
 static struct attribute *vendor_mm_attrs[] = {
 	&kswapd_cpu_affinity_attr.attr,
 	&kswapd_uclamp_min_attr.attr,
@@ -365,6 +385,11 @@ static int vh_mm_init(void)
 		goto out_err;
 
 	ret = register_trace_android_vh_do_sync_mmap_readahead(vh_do_sync_mmap_readahead, NULL);
+	if (ret)
+		goto out_err;
+
+	ret = register_trace_android_rvh_read_swap_cache_async_timeout
+			(rvh_read_swap_cache_async_schedule_timeout, NULL);
 	if (ret)
 		goto out_err;
 

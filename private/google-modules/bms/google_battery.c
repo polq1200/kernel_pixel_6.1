@@ -4999,14 +4999,14 @@ static int bhi_cycle_count_index(const struct health_data *health_data)
 	if (h_mt < h_nrt || cc_nrt <= cc_mt)
 		return BHI_ALGO_FULL_HEALTH;
 
-	/* remove marginal_threshold */
-	if (h_mt == h_nrt) {
-		h_mt = 100;
-		cc_mt = 0;
-	}
-
 	/* use interpolation to get index via cycle count/health threshold */
-	cc_index = (h_mt - h_nrt) * (cc - cc_nrt) / (cc_mt - cc_nrt) + h_nrt;
+	if (h_mt == h_nrt) /* Decay: 100%@0cc to h_nrt@cc_nrt */
+		cc_index = cc * (h_nrt - 100) / cc_nrt  + 100;
+	else if (cc < cc_mt) /* Decay: 100%@0cc to h_mt@cc_mt */
+		cc_index = cc * (h_mt - 100) / cc_mt + 100;
+	else /* Decay: h_mt@cc_mt to h_nrt@cc_nrt */
+		cc_index = (cc - cc_mt) * (h_nrt - h_mt)  / (cc_nrt - cc_mt) + h_mt;
+
 	cc_index = cc_index * 100; /* for BHI_ROUND_INDEX*/
 
 	if (cc_index > BHI_ALGO_FULL_HEALTH)
