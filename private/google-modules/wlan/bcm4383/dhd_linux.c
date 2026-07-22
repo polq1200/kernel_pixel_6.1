@@ -16032,6 +16032,11 @@ void dhd_detach(dhd_pub_t *dhdp)
 		dhd_os_dbg_detach(dhdp);
 	}
 
+/* Delete monitor interface before the static-IF loop and wlan0 unregister */
+#ifdef WL_MONITOR
+	dhd_del_monitor_if(dhd);
+#endif /* WL_MONITOR */
+
 	/* delete all interfaces, start with virtual  */
 	if (dhd->dhd_state & DHD_ATTACH_STATE_ADD_IF) {
 		int i = 1;
@@ -16322,9 +16327,6 @@ void dhd_detach(dhd_pub_t *dhdp)
 	/* memory waste feature list initilization */
 	dhd_mw_list_delete(dhdp, &(dhdp->mw_list_head));
 #endif /* DHD_DEBUG */
-#ifdef WL_MONITOR
-	dhd_del_monitor_if(dhd);
-#endif /* WL_MONITOR */
 #ifdef DHD_LOGGER
 	if ((dhd_logger == TRUE) && (dhdp->logger)) {
 		/* detach dhd logger interface */

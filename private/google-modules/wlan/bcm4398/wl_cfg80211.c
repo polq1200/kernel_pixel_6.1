@@ -27291,6 +27291,7 @@ wl_notify_start_auth(struct bcm_cfg80211 *cfg,
 	struct cfg80211_external_auth_params ext_auth_param;
 	struct net_device *ndev = cfgdev_to_wlc_ndev(cfgdev, cfg);
 	u32 datalen = be32_to_cpu(e->datalen);
+	u32 reason = be32_to_cpu(e->reason);
 	wl_auth_start_evt_t *evt_data = (wl_auth_start_evt_t *)data;
 	wl_assoc_mgr_cmd_t cmd;
 	struct wireless_dev *wdev = ndev->ieee80211_ptr;
@@ -27339,10 +27340,15 @@ wl_notify_start_auth(struct bcm_cfg80211 *cfg,
 	}
 #endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)) || defined(WL_EXT_AUTH_BKPORT) */
 	ext_auth_param.action = NL80211_EXTERNAL_AUTH_START;
-	ext_auth_param.key_mgmt_suite = ntoh32(WLAN_AKM_SUITE_SAE_SHA256);
+	if (reason == RSN_AKM_SAE_EXT_PSK) {
+		ext_auth_param.key_mgmt_suite = WLAN_AKM_SUITE_SAE_EXT_PSK;
+	} else {
+		/* For RSN_AKM_SAE_PSK */
+		ext_auth_param.key_mgmt_suite = WLAN_AKM_SUITE_SAE_SHA256;
+	}
 
-	WL_INFORM_MEM(("call cfg80211_external_auth_request, BSSID:"MACDBG"\n",
-		MAC2STRDBG(&ext_auth_param.bssid)));
+	WL_INFORM_MEM(("call cfg80211_external_auth_request, BSSID:"MACDBG", AKM Suite:0x%08x\n",
+		MAC2STRDBG(&ext_auth_param.bssid), ext_auth_param.key_mgmt_suite));
 
 	wl_cfg80211_wdev_lock(wdev);
 	err = cfg80211_external_auth_request(ndev, &ext_auth_param, GFP_KERNEL);
