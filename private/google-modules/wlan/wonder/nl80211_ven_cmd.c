@@ -282,6 +282,29 @@ static bool wonder_tx_rate_sanity_check(u32 preamble, u32 bw, u32 gi, u8 nss, u8
 			pr_warn("Invalid GI %u (VHT only support 0.8 or 0.4)\n", gi);
 			return false;
 		}
+	} else if (preamble == WONDERTAP_RATE_PREAMBLE_HE) {
+		/* HE (802.11ax) max 160MHz and max 8 NSS */
+		if (bw > WONDERTAP_RATE_BW_160) {
+			pr_warn("HE: Invalid BW %u (Max 160MHz)\n", bw);
+			return false;
+		}
+
+		if (nss < 1 || nss > 8) {
+			pr_warn("HE: Invalid NSS %u (Max 8)\n", nss);
+			return false;
+		}
+
+		/* HE MCS max 11 (1024-QAM) */
+		if (mcs > 11) {
+			pr_warn("HE: Invalid MCS %u (Max 11)\n", mcs);
+			return false;
+		}
+
+		if (gi == WONDERTAP_RATE_GI_SHORT || gi > WONDERTAP_RATE_GI_3_2_US) {
+			pr_warn("HE: Invalid GI %u (Expected Default, 0.8us, 1.6us, 3.2us)\n",
+				gi);
+			return false;
+		}
 	} else {
 		pr_err("Unsupported preamble type: %u\n", preamble);
 		return false;
@@ -434,7 +457,7 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct wonder_data *wonder = hw->priv;
 	struct sk_buff *skb;
-	const size_t reply_skb_size = sizeof(u32) + sizeof(u8) * 5;
+	const size_t reply_skb_size = sizeof(u32) + sizeof(u8) * 6;
 	struct wondertap_capability cap;
 	bool is_ibss_mode = (wdev && wdev->iftype != NL80211_IFTYPE_MONITOR) ? true : false;
 	u32 mtu_size = is_ibss_mode ? WONDER_IBSS_MODE_MTU_SIZE : INT_MAX;
@@ -442,6 +465,7 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 	u8 nss;
 	u8 hw_amsdu;
 	u8 hw_ampdu;
+	u8 hw_ra;
 	u8 ch_hopping;
 	int ret;
 
@@ -453,15 +477,16 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 	}
 
 	hbs_support = cap.bits.hbs_support;
-	nss = cap.bits.nss + 1;
+	nss = cap.bits.nss;
 	hw_amsdu = cap.bits.amsdu_aggregation;
 	hw_ampdu = cap.bits.ampdu_aggregation;
+	hw_ra = cap.bits.rate_adaptation;
 	ch_hopping = cap.bits.channel_hopping;
 
-	pr_info("Handling is_ibss_mode: %d, MTU: %u, HW_AMSDU: %u, HW_AMPDU: %u, "
+	pr_info("Handling is_ibss_mode: %d, MTU: %u, HW_AMSDU: %u, HW_AMPDU: %u, HW_RA: %u, "
 		"CH_HOPPING: %u, HBS_SUPPORT: %u, NSS: %u\n",
-		is_ibss_mode, mtu_size, hw_amsdu, hw_ampdu, ch_hopping,
-		hbs_support, nss);
+		is_ibss_mode, mtu_size, hw_amsdu, hw_ampdu, hw_ra,
+		ch_hopping, hbs_support, nss);
 
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(reply_skb_size));
 	if (!skb) {
@@ -484,6 +509,12 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 
 	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HW_AMPDU, sizeof(u8), &hw_ampdu)) {
 		pr_err("Failed to put CAP HW_AMPDU attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HW_RA, sizeof(u8), &hw_ra)) {
+		pr_err("Failed to put CAP HW_RA attribute\n");
 		kfree_skb(skb);
 		return -EMSGSIZE;
 	}
@@ -866,11 +897,15 @@ static int wonder_vendor_cmd_set_features(struct wiphy *wiphy,
 	switch (feature_id) {
 	case WONDER_FEATURE_CHANNEL_HOPPING:
 		wonder->channel_hopping_enable = enable;
-		wonder->wondertap_data.cache_flags |= WONDERTAP_CACHE_CHANNEL_HOPPING_SET;
 		break;
 	case WONDER_FEATURE_AMSDU:
 		wonder->amsdu_enable = enable;
-		wonder->wondertap_data.cache_flags |= WONDERTAP_CACHE_AMSDU_SET;
+		break;
+	case WONDER_FEATURE_AMPDU:
+		wonder->ampdu_enable = enable;
+		break;
+	case WONDER_FEATURE_RA:
+		wonder->ra_enable = enable;
 		break;
 	default:
 		wonder_error("Unknown feature ID: %u\n", feature_id);

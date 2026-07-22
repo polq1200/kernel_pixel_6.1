@@ -9593,6 +9593,12 @@ dhd_prot_event_process(dhd_pub_t *dhd, void *msg)
 		PKTPULL(dhd->osh, pkt, dhd->prot->rx_dataoffset);
 #endif /* !BCM_ROUTER_DHD */
 
+	if (buflen > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle event_data_len %u posted buf %u clamping\n",
+			__FUNCTION__, buflen, PKTLEN(dhd->osh, pkt)));
+		buflen = (uint16)PKTLEN(dhd->osh, pkt);
+	}
+
 	PKTSETLEN(dhd->osh, pkt, buflen);
 #ifdef DHD_LBUF_AUDIT
 	PKTAUDIT(dhd->osh, pkt);
@@ -9645,6 +9651,12 @@ BCMFASTPATH(dhd_prot_process_infobuf_complete)(dhd_pub_t *dhd, void *buf)
 	if (dhd->prot->rx_dataoffset)
 		PKTPULL(dhd->osh, pkt, dhd->prot->rx_dataoffset);
 #endif /* !BCM_ROUTER_DHD */
+
+	if (buflen > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle info_data_len %u posted buf %u clamping\n",
+			__FUNCTION__, buflen, PKTLEN(dhd->osh, pkt)));
+		buflen = (uint16)PKTLEN(dhd->osh, pkt);
+	}
 
 	PKTSETLEN(dhd->osh, pkt, buflen);
 #ifdef DHD_LBUF_AUDIT
@@ -18257,6 +18269,7 @@ BCMFASTPATH(dhd_prot_process_msgbuf_rxcpl_packet)(dhd_pub_t *dhd, void *_msg)
 	int ifidx = 0;
 	void *pkt;
 	uint32 pktid;
+	uint16 fw_len = ltoh16(msg->data_len);
 
 	pktid = ltoh32(msg->cmn_hdr.request_id);
 	if (msg->cmn_hdr.flags & BCMPCIE_CMNHDR_FLAGS_WAKE_PACKET) {
@@ -18278,8 +18291,12 @@ BCMFASTPATH(dhd_prot_process_msgbuf_rxcpl_packet)(dhd_pub_t *dhd, void *_msg)
 		PKTPULL(dhd->osh, pkt, prot->rx_dataoffset);
 	}
 
-	/* Actual length of the packet */
-	PKTSETLEN(dhd->osh, pkt, ltoh16(msg->data_len));
+	if (fw_len > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle data_len %u > posted %u\n",
+			__FUNCTION__, fw_len, PKTLEN(dhd->osh, pkt)));
+		fw_len = (uint16)PKTLEN(dhd->osh, pkt);
+	}
+	PKTSETLEN(dhd->osh, pkt, fw_len);
 	DHD_PKTTAG_SET_IFID((dhd_pkttag_fr_t *)PKTTAG(pkt), ifidx);
 	dhd_prot_rx_frame(dhd, pkt, ifidx, 1);
 

@@ -5080,6 +5080,29 @@ static int bhi_cycle_count_index(const struct health_data *health_data)
 	return cc_index;
 }
 
+static bool bhi_algo_has_grace(int algo)
+{
+	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B ||
+	       algo == BHI_ALGO_ACHI_CARETAKER || algo == BHI_ALGO_ACHI_SEC ||
+	       algo == BHI_ALGO_ACHI_MIX;
+}
+
+static bool bhi_algo_under_grace(int algo, const struct health_data *data)
+{
+	const int cycle_count = data->bhi_data.cycle_count;
+	const int l_bound = bhi_get_capacity_bound(cycle_count,
+						   &data->bhi_data.lower_bound.limit[0]);
+
+	if (!bhi_algo_has_grace(algo))
+		return false;
+
+	if ((l_bound == 0 || l_bound == data->bhi_data.pack_capacity)
+	    && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
+		return true;
+
+	return false;
+}
+
 static int bhi_calc_health_index(int algo, struct health_data *health_data,
 				 int cap_index, int imp_index, int sd_index)
 {
@@ -5090,6 +5113,9 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 
 	if (health_data->bhi_debug_health_index)
 		return health_data->bhi_debug_health_index;
+
+	if (bhi_algo_under_grace(algo, health_data))
+		return BHI_ALGO_FULL_HEALTH;
 
 	switch (algo) {
 	case BHI_ALGO_DISABLED:
@@ -5142,14 +5168,6 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 	return index;
 }
 
-static bool bhi_algo_has_grace(int algo)
-{
-	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B ||
-	       algo == BHI_ALGO_ACHI_CARETAKER || algo == BHI_ALGO_ACHI_SEC ||
-	       algo == BHI_ALGO_ACHI_MIX;
-
-}
-
 static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 					      const struct health_data *data)
 {
@@ -5161,14 +5179,8 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
 
-	if (bhi_algo_has_grace(algo)) {
-		const int cycle_count = data->bhi_data.cycle_count;
-		const int l_bound = bhi_get_capacity_bound(cycle_count,
-							   &data->bhi_data.lower_bound.limit[0]);
-
-		if (l_bound == 0 && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
-			return BH_NOT_AVAILABLE;
-	}
+	if (bhi_algo_under_grace(algo, data))
+		return BH_NOT_AVAILABLE;
 
 	if (data->cal_state == REC_STATE_SCHEDULED)
 		return BH_INCONSISTENT;
@@ -12727,15 +12739,14 @@ static int batt_update_hist_work(struct batt_drv *batt_drv)
 
 		if (batt_drv->blf_state == BATT_LFCOLLECT_COLLECT) {
 			ret = batt_history_data_work(batt_drv);
-			if (ret < 0) {
+			if (ret < 0)
 				pr_err("BHI: cannot prime history (%d)\n", ret);
-			} else {
-				mutex_lock(&batt_drv->chg_lock);
-				ret = batt_bhi_stats_update_all(batt_drv);
-				if (ret < 0)
-					pr_err("BHI: cannot init stats (%d)\n", ret);
-				mutex_unlock(&batt_drv->chg_lock);
-			}
+
+			mutex_lock(&batt_drv->chg_lock);
+			ret = batt_bhi_stats_update_all(batt_drv);
+			if (ret < 0)
+				pr_err("BHI: cannot init stats (%d)\n", ret);
+			mutex_unlock(&batt_drv->chg_lock);
 		}
 	}
 
@@ -13307,6 +13318,9 @@ static void gbatt_check_spoof_reason(struct batt_drv *batt_drv)
 
 	if (ssoc_state->spoof_start_soc != spoof_start_soc ||
 	    ssoc_state->spoof_end_soc != spoof_end_soc) {
+		if (ssoc_state->spoof_triggered)
+			gbatt_reset_curve(batt_drv, gbatt_get_capacity(batt_drv));
+
 		ssoc_state->spoof_reason = spoof_reason;
 		ssoc_state->spoof_start_soc = spoof_start_soc;
 		ssoc_state->spoof_end_soc = spoof_end_soc;
@@ -13327,7 +13341,7 @@ static void gbatt_clear_spoof_data(struct batt_ssoc_state *ssoc_state)
 #define DWELL_SPOOF_STEP_UP_MS			60000
 #define DWELL_SPOOF_MAX_GAP_PCT			10
 
-static void gbatt_dwell_step_soc(struct batt_drv *batt_drv)
+static void gbatt_dwell_step_soc(struct batt_drv *batt_drv, int target_soc)
 {
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
 	const int capacity = ssoc_get_capacity(ssoc_state);
@@ -13338,17 +13352,17 @@ static void gbatt_dwell_step_soc(struct batt_drv *batt_drv)
 	if (batt_drv->chg_state.f.chg_status != POWER_SUPPLY_STATUS_NOT_CHARGING)
 		return;
 
-	if (capacity == ssoc_state->spoof_start_soc)
+	if (capacity == target_soc)
 		return;
 
 	now = ktime_get_boottime();
 	if (ktime_ms_delta(now, ssoc_state->last_spoof_step_up) <= DWELL_SPOOF_STEP_UP_MS)
 		return;
 
-	if (capacity < ssoc_state->spoof_start_soc) {
+	if (capacity < target_soc) {
 		/* Always allow step-up to reach target/full */
 		next_soc = capacity + 1;
-	} else if (capacity > gdf) {
+	} else if (capacity > target_soc && capacity > gdf) {
 		/* Only step-down if we are still above the real battery level */
 		next_soc = capacity - 1;
 	}
@@ -13422,18 +13436,24 @@ static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 	if (ssoc_state->spoof_reason == SPOOF_SOC_DWELL_DEFEND) {
 		const bool gap_ok = (ssoc_state->spoof_start_soc - gdf) <= DWELL_SPOOF_MAX_GAP_PCT;
 
-		/* Entry check */
+		/* Entry check & Step-down phase */
 		if (!ssoc_state->spoof_triggered && is_connect &&
-			ssoc_state->spoof_reason != SPOOF_SOC_NONE &&
-			(gdf >= ssoc_state->spoof_end_soc ||
-			 (ibatt > DWELL_SPOOF_IBATT_THRESHOLD_UA && gap_ok))) {
-			/* Entry: when Soc reachs spoof_start_soc (charge or self-discharge) */
-			if (capacity == ssoc_state->spoof_start_soc) {
-				ssoc_state->spoof_triggered = true;
-			} else {
-				gbatt_dwell_step_soc(batt_drv);
+			ssoc_state->spoof_reason != SPOOF_SOC_NONE) {
+			if (gdf >= ssoc_state->spoof_end_soc ||
+			    (ibatt > DWELL_SPOOF_IBATT_THRESHOLD_UA && gap_ok)) {
+				/* Entry: when Soc hit spoof_start_soc (charge or self-discharge) */
+				if (capacity == ssoc_state->spoof_start_soc) {
+					ssoc_state->spoof_triggered = true;
+				} else {
+					/* Step-up phase: smooth up towards spoof_start_soc */
+					gbatt_dwell_step_soc(batt_drv, ssoc_state->spoof_start_soc);
+				}
+			} else if (capacity > gdf && ibatt <= DWELL_SPOOF_IBATT_THRESHOLD_UA) {
+				/* Step-down phase: after exit condition, smooth down towards gdf */
+				gbatt_dwell_step_soc(batt_drv, gdf);
 			}
 		}
+
 		/* Exit check */
 		if (ssoc_state->spoof_triggered) {
 			const bool gap_exceeded = (ssoc_state->spoof_start_soc - gdf) > DWELL_SPOOF_MAX_GAP_PCT;
@@ -13443,8 +13463,6 @@ static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 			} else if ((gdf < ssoc_state->spoof_end_soc &&
 				   ibatt <= DWELL_SPOOF_IBATT_THRESHOLD_UA) || gap_exceeded) {
 				is_soc_curve_update = true;
-				/* Force UI to drop if we exit due to low battery */
-				ui_soc = capacity;
 			}
 		}
 	} else {
@@ -14132,8 +14150,15 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 		memcpy(&bhi_data->lower_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
 	} else {
-		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
-			bhi_data->lower_bound.limit[i] = bhi_data->pack_capacity * 60 / 100;
+		int cap = bhi_data->pack_capacity;
+		int grace_limit = health_data->bhi_cycle_grace / 100;
+
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++) {
+			if (i < grace_limit)
+				bhi_data->lower_bound.limit[i] = cap;
+			else
+				bhi_data->lower_bound.limit[i] = cap * 60 / 100;
+		}
 	}
 	dev_info(batt_drv->device, "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
 		 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],
