@@ -3059,7 +3059,8 @@ _dhd_set_mac_address(dhd_info_t *dhd, int ifidx, uint8 *addr)
 	ret = dhd_iovar(&dhd->pub, ifidx, "cur_etheraddr", (char *)addr,
 			ETHER_ADDR_LEN, NULL, 0, TRUE);
 	if (ret < 0) {
-		DHD_ERROR(("%s: set cur_etheraddr failed\n", dhd_ifname(&dhd->pub, ifidx)));
+		DHD_ERROR(("%s: set cur_etheraddr failed. ret=%d\n",
+			dhd_ifname(&dhd->pub, ifidx), ret));
 	} else {
 		NETDEV_ADDR_SET(dhd->iflist[ifidx]->net, ETHER_ADDR_LEN, addr, ETHER_ADDR_LEN);
 		if (ifidx == 0)
