@@ -1178,7 +1178,6 @@ int edgetpu_device_group_get_vii_response(struct edgetpu_device_group *group, vo
 	spin_unlock_irqrestore(&group->ikv_resp_lock, flags);
 
 	memcpy(resp, ikv_resp->resp, edgetpu_vii_response_packet_size());
-	/* This will also free `ikv_resp` */
 	gcip_mailbox_awaiter_put(&ikv_resp->gcip_awaiter);
 
 unlock_group:

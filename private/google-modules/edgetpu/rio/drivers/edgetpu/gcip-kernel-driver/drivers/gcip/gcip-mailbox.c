@@ -164,14 +164,7 @@ static void gcip_mailbox_awaiter_release(struct kref *kref)
 		awaiter->ops->release(awaiter);
 }
 
-/**
- * gcip_mailbox_awaiter_get() - Gets the reference count of the awaiter.
- * @awaiter: The awaiter to be got.
- *
- * Return: The pointer to the awaiter.
- */
-static inline struct gcip_mailbox_awaiter *
-gcip_mailbox_awaiter_get(struct gcip_mailbox_awaiter *awaiter)
+struct gcip_mailbox_awaiter *gcip_mailbox_awaiter_get(struct gcip_mailbox_awaiter *awaiter)
 {
 	kref_get(&awaiter->kref);
 

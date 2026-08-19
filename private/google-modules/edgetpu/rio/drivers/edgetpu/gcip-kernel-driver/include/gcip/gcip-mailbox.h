@@ -597,6 +597,14 @@ int gcip_mailbox_awaiter_init(struct gcip_mailbox_awaiter *awaiter, struct gcip_
 			      void *resp, const struct gcip_mailbox_awaiter_ops *ops);
 
 /**
+ * gcip_mailbox_awaiter_get() - Gets the reference count of the awaiter.
+ * @awaiter: The awaiter to be got.
+ *
+ * Return: The pointer to the awaiter.
+ */
+struct gcip_mailbox_awaiter *gcip_mailbox_awaiter_get(struct gcip_mailbox_awaiter *awaiter);
+
+/**
  * gcip_mailbox_awaiter_put() - Puts the reference count of the awaiter.
  * @awaiter: The awaiter to be put.
  *
