@@ -2623,7 +2623,13 @@ static int p9221_set_hpp_dc_icl(struct p9221_charger_data *charger, bool enable)
 
 static void p9221_check_icl_stable(struct p9221_charger_data *charger)
 {
-	if (charger->online && charger->disconnect_total_count > 0) {
+	if (!charger->online)
+		return;
+
+	dev_info(charger->dev, "check icl stable: count=%d, time=%d\n",
+		 charger->disconnect_total_count, ICL_STABLE_TIME_MS);
+
+	if (charger->disconnect_total_count > 0) {
 		__pm_stay_awake(charger->icl_stable_ws);
 		schedule_delayed_work(&charger->icl_stable_work,
 				      msecs_to_jiffies(ICL_STABLE_TIME_MS));
@@ -2659,6 +2665,7 @@ int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable)
 	} else if (!enable && charger->auth_delay) {
 		dev_info(&charger->client->dev, "Disable Auth ICL (%d)\n", ret);
 		charger->auth_delay = false;
+		p9221_check_icl_stable(charger);
 		cancel_delayed_work(&charger->auth_dc_icl_work);
 		alarm_try_to_cancel(&charger->auth_dc_icl_alarm);
 	}
@@ -2825,8 +2832,6 @@ static int p9221_enable_wlc_dc(struct p9221_charger_data *charger)
 		goto not_hpp;
 	}
 	set_renego_state(charger, P9XXX_AVAILABLE);
-
-	p9221_check_icl_stable(charger);
 
 	/* Only returns 1 for success */
 	if (ret != 1) {
@@ -3493,6 +3498,8 @@ static int p9221_set_dc_icl(struct p9221_charger_data *charger)
 		dev_err(&charger->client->dev,
 			"Could not vote DC_ICL %d\n", ret);
 
+	p9221_check_icl_stable(charger);
+
 	if (charger->pdata->has_sw_ramp && !charger->icl_ramp)
 		gvotable_cast_int_vote(charger->dc_icl_votable, P9221_RAMP_VOTER, 0, false);
 
@@ -3670,8 +3677,6 @@ static void p9221_icl_ramp_reset(struct p9221_charger_data *charger)
 	if (alarm_try_to_cancel(&charger->icl_ramp_alarm) < 0)
 		dev_warn(&charger->client->dev, "Couldn't cancel icl_ramp_alarm\n");
 	cancel_delayed_work(&charger->icl_ramp_work);
-
-	p9221_check_icl_stable(charger);
 }
 
 static void p9221_icl_ramp_start(struct p9221_charger_data *charger)

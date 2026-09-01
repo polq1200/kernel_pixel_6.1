@@ -398,9 +398,16 @@ static void edgetpu_ikv_process_response(struct edgetpu_ikv_response *ikv_resp, 
 		list_del(&ikv_resp->list_entry);
 	list_add_tail(&ikv_resp->list_entry, ikv_resp->dest_queue);
 
+	/*
+	 * Hold a reference to the awaiter. This prevents the response object from being freed by
+	 * the queue consumer before we finish signaling the response waiters.
+	 */
+	gcip_mailbox_awaiter_get(&ikv_resp->gcip_awaiter);
+
 	spin_unlock_irqrestore(ikv_resp->queue_lock, flags);
 
 	signal_response_waiters(ikv_resp, fence_error, true);
+	gcip_mailbox_awaiter_put(&ikv_resp->gcip_awaiter);
 }
 
 static void edgetpu_ikv_response_handle_arrived(struct gcip_mailbox_awaiter *gcip_awaiter)
