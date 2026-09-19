@@ -232,7 +232,7 @@ struct batt_ssoc_state {
 	bool spoof_triggered;
 	int spoof_dwell_hold_soc;
 	bool spoof_dwell_hold_triggered;
-	bool spoof_dwell_exit_triggered;
+	u8 spoof_dwell_exit_triggered;
 	ktime_t last_spoof_step_up;
 };
 
@@ -1239,8 +1239,6 @@ static void batt_prlog__(int info_level, const char *format, ...)
 #define SSOC_FULL 100
 #define UICURVE_BUF_SZ	(UICURVE_MAX * 15 + 1)
 #define SSOC_HIGH_SOC 90
-
-#define HOLD_SPOOFING_RANGE 3
 
 enum ssoc_uic_type {
 	SSOC_UIC_TYPE_DSG  = -1,
@@ -13300,11 +13298,11 @@ static void gbatt_check_spoof_reason(struct batt_drv *batt_drv)
 		spoof_start_soc = LONGLIFE_CHARGE_STOP_LEVEL;
 		spoof_end_soc = LONGLIFE_CHARGE_START_LEVEL - 1;
 	} else if (batt_csi_status_is_dwell(batt_drv)) {
+		ssoc_state->spoof_dwell_hold_triggered = false;
+		ssoc_state->spoof_dwell_exit_triggered = 0;
+
 		/* For the case Dwell v1.5 spoofing need to be disabled */
-		if (!batt_drv->dwell_soc_spoofing_en) {
-			ssoc_state->spoof_dwell_hold_triggered = false;
-		} else {
-			ssoc_state->spoof_dwell_hold_triggered = false;
+		if (batt_drv->dwell_soc_spoofing_en) {
 			spoof_reason = SPOOF_SOC_DWELL_DEFEND;
 			spoof_end_soc = batt_drv->dynamic_charge_start_level - 1;
 			if (batt_csi_status_is_visible_dwell(batt_drv))
@@ -13334,12 +13332,15 @@ static void gbatt_clear_spoof_data(struct batt_ssoc_state *ssoc_state)
 	ssoc_state->spoof_reason = SPOOF_SOC_NONE;
 	ssoc_state->spoof_start_soc = 0;
 	ssoc_state->spoof_end_soc = 0;
-	ssoc_state->spoof_dwell_exit_triggered = false;
+	ssoc_state->spoof_dwell_exit_triggered = 0;
+	ssoc_state->spoof_dwell_hold_triggered = false;
 }
 
 #define DWELL_SPOOF_IBATT_THRESHOLD_UA	100000
-#define DWELL_SPOOF_STEP_UP_MS			60000
-#define DWELL_SPOOF_MAX_GAP_PCT			10
+#define DWELL_SPOOF_STEP_UP_MS		60000
+#define DWELL_SPOOF_MAX_GAP_PCT		10
+#define DWELL_SPOOF_SOC_HOLD_RANGE	3
+#define DWELL_SPOOF_EXIT_TIMEOUT_CYCLES	5
 
 static void gbatt_dwell_step_soc(struct batt_drv *batt_drv, int target_soc)
 {
@@ -13375,6 +13376,7 @@ static void gbatt_dwell_step_soc(struct batt_drv *batt_drv, int target_soc)
 
 static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 {
+	const u8 spoof_dwell_timeout_state = 0xFF;
 	struct batt_ssoc_state *ssoc_state = &batt_drv->ssoc_state;
 	const bool is_connect = !chg_state_is_disconnected(&batt_drv->chg_state);
 	const bool pre_spoof_triggered = ssoc_state->spoof_triggered;
@@ -13389,39 +13391,48 @@ static void gbatt_check_spoof_soc(struct batt_drv *batt_drv)
 	if (!is_connect) {
 		if (batt_csi_status_is_dwell(batt_drv)) {
 			/* To spoof Soc only during Dwell ACTIVE_HOLD state (only showed in HLOS) */
-			if (!ssoc_state->spoof_dwell_hold_triggered) {
+			if (!ssoc_state->spoof_dwell_hold_triggered &&
+			    ssoc_state->spoof_dwell_exit_triggered != spoof_dwell_timeout_state &&
+			    batt_drv->dwell_soc_spoofing_en) {
 				/* First time entering ACTIVE_HOLD */
 				ssoc_state->spoof_dwell_hold_soc = gdf;
 				ssoc_state->spoof_dwell_hold_triggered = true;
 				/* spoofing to the current UISoc */
 				ssoc_state->spoof_start_soc = ui_soc;
 				ssoc_state->spoof_end_soc = ui_soc;
+				ssoc_state->spoof_reason = SPOOF_SOC_DWELL_DEFEND;
 				ssoc_state->spoof_triggered = true;
 			}
 
 			if (!ssoc_state->spoof_triggered)
 				return;
 
-			/* Already triggered 1% drop for exit, waiting for HLOS to clear Dwell */
-			if (ssoc_state->spoof_dwell_exit_triggered)
+			/* Wait for HLOS exit Dwell after dropped > "DWELL_SPOOF_SOC_HOLD_RANGE" */
+			if (ssoc_state->spoof_dwell_exit_triggered > 0 &&
+			    ssoc_state->spoof_dwell_exit_triggered != spoof_dwell_timeout_state) {
+				if (--ssoc_state->spoof_dwell_exit_triggered == 0) {
+					gbatt_clear_spoof_data(ssoc_state);
+					/* Set timeout state to prevent spoof_triggered re-entry */
+					ssoc_state->spoof_dwell_exit_triggered =
+						spoof_dwell_timeout_state;
+				}
 				return;
+			}
 
-			/* Keep spoof if soc_gdf has not dropped more than "HOLD_SPOOFING_RANGE" */
-			if ((ssoc_state->spoof_dwell_hold_soc - gdf) < HOLD_SPOOFING_RANGE)
+			/* Keep spoof if soc_gdf has not dropped > "DWELL_SPOOF_SOC_HOLD_RANGE" */
+			if ((ssoc_state->spoof_dwell_hold_soc - gdf) < DWELL_SPOOF_SOC_HOLD_RANGE)
 				return;
 
 			/* Update spoof target to current-1 and latch it */
 			ssoc_state->spoof_start_soc = ui_soc - 1;
 			ssoc_state->spoof_end_soc = ui_soc - 1;
-			ssoc_state->spoof_dwell_exit_triggered = true;
+			ssoc_state->spoof_dwell_exit_triggered = DWELL_SPOOF_EXIT_TIMEOUT_CYCLES;
 			gbatt_reset_curve(batt_drv, ui_soc - 1);
 			return;
 		}
 
-		/* Not in Dwell but disconnected, reset triggered flag */
-		if (ssoc_state->spoof_dwell_hold_triggered)
-			ssoc_state->spoof_dwell_hold_triggered = false;
 
+		/* Not in Dwell (HLOS exit Dwell) but disconnected */
 		/* update curve when disconnected */
 		if (ssoc_state->spoof_triggered &&
 		    capacity != ssoc_state->spoof_start_soc)

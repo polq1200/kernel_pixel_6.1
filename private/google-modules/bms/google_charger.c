@@ -2947,12 +2947,18 @@ static void chg_work(struct work_struct *work)
 		/* Run thermal stats when connected to power (preset || online) */
 		thermal_stats_update(chg_drv);
 
+		if (present) {
+			/*
+			 * b/537974485: Stop BD work and clear disconnect_time unconditionally
+			 * on reconnect to prevent stale timestamps from breaking the debounce
+			 * logic. This must happen regardless of the stop_charging state.
+			 */
+			chg_stop_bd_work(chg_drv);
+		}
+
 		if (chg_drv->stop_charging != 0 && present) {
 			const bool restore_fcc =
 				chg_drv->therm_wlc_override_fcc;
-
-			/* Stop BD work after disconnect */
-			chg_stop_bd_work(chg_drv);
 
 			/* will re-enable charging after setting FCC,CC_MAX */
 			if (restore_fcc)
