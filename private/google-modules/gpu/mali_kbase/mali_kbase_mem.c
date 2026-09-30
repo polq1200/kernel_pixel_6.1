@@ -477,7 +477,7 @@ int kbase_gpu_mmap(struct kbase_context *kctx, struct kbase_va_region *reg, u64 
 			(reg->flags | KBASE_REG_GPU_RD) & ~KBASE_REG_GPU_WR, KBASE_MEM_GROUP_SINK,
 			mmu_sync_info);
 		if (err)
-			goto bad_padding;
+			goto bad_insert;
 	}
 
 	return err;
@@ -495,11 +495,6 @@ bad_aliased_insert:
 					 phys_alloc, alloc->imported.alias.aliased[i].length,
 					 alloc->imported.alias.aliased[i].length, kctx->as_nr);
 	}
-bad_padding:
-	if (reg->gpu_alloc->type == KBASE_MEM_TYPE_IMPORTED_UMM)
-		kbase_mmu_teardown_imported_pages(kctx->kbdev, &kctx->mmu, reg->start_pfn,
-						  alloc->pages, alloc->nents, alloc->nents,
-						  kctx->as_nr);
 bad_insert:
 	kbase_remove_va_region(kctx->kbdev, reg);
 
@@ -894,6 +889,9 @@ static int kbase_do_syncset(struct kbase_context *kctx, struct basep_syncset *ss
 	}
 
 	if (!(reg->flags & KBASE_REG_CPU_CACHED))
+		goto out_unlock;
+
+	if (reg->flags & KBASE_REG_DONT_NEED)
 		goto out_unlock;
 
 	start = (uintptr_t)sset->user_addr;

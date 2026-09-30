@@ -1072,22 +1072,11 @@ static void unbind_queue(struct kbase_context *kctx, struct kbase_queue *queue)
 	kbase_reset_gpu_assert_failed_or_prevented(kctx->kbdev);
 	lockdep_assert_held(&kctx->csf.lock);
 
-	if (queue->bind_state == KBASE_CSF_QUEUE_UNBOUND)
-		return;
+	if (queue->bind_state != KBASE_CSF_QUEUE_UNBOUND) {
+		if (queue->bind_state == KBASE_CSF_QUEUE_BOUND)
+			kbase_csf_scheduler_queue_stop(queue);
 
-	if (queue->bind_state == KBASE_CSF_QUEUE_BOUND) {
-		kbase_csf_scheduler_queue_stop(queue);
 		unbind_stopped_queue(kctx, queue);
-	}
-
-	if (queue->bind_state == KBASE_CSF_QUEUE_BIND_IN_PROGRESS) {
-		/* Hold scheduler lock to prevent a rare racing against
-		 * queue termination or vm_close which holds the same lock
-		 * and clears group->bound_queues[] and frees the queue.
-		 */
-		kbase_csf_scheduler_lock(kctx->kbdev);
-		unbind_stopped_queue(kctx, queue);
-		kbase_csf_scheduler_unlock(kctx->kbdev);
 	}
 }
 
