@@ -1,17 +1,39 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
+load("//build/kernel/kleaf:kernel.bzl", "checkpatch", "ddk_headers", "ddk_module", "kernel_module")
 
-filegroup(
+package(
+    default_visibility = [
+        "//private/devices/google:__subpackages__",
+    ],
+)
+
+checkpatch(
+    name = "checkpatch",
+    checkpatch_pl = "//common:scripts/checkpatch.pl",
+)
+
+ddk_headers(
     name = "headers",
-    srcs = glob([
+    hdrs = glob([
         "*.h",
     ]),
+    includes = ["."],
     visibility = [
         "//private/devices/google:__subpackages__",
         "//private/google-modules/power/mitigation:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
     ],
+)
+
+ddk_headers(
+    name = "common_headers",
+    hdrs = [
+        ":headers",
+        "//common:all_headers_aarch64",
+        "//private/google-modules/bms/misc:headers",
+    ],
+    visibility = ["//visibility:private"],
 )
 
 kernel_module(
@@ -40,6 +62,7 @@ kernel_module(
         "max77779-charger.ko",
         "max77779-charger-i2c.ko",
         "p9221.ko",
+        "google-wlc.ko",
         "pca9468.ko",
         "max77779_i2cm.ko",
         "max77779_i2cm_i2c.ko",
@@ -55,12 +78,14 @@ kernel_module(
         "ln8411.ko",
         "max77779-fg-i2c.ko",
         "max77779-fg.ko",
+        "ln8282_regulator.ko",
         "max77779-fwupdate.ko",
         "rt9471_charger.ko",
         # "max77729.ko",
         # "max77759.ko",
         # "pca9468-google.ko",
         "hl7132.ko",
+        "ggauge_health_monitor.ko",
     ],
     kernel_build = "//private/devices/google/common:kernel",
     visibility = [
@@ -68,9 +93,100 @@ kernel_module(
         "//private/google-modules/power/mitigation:__subpackages__",
         "//private/google-modules/power/reset:__subpackages__",
         "//private/google-modules/soc/gs:__pkg__",
+        "//private/google-modules/soc/rdo:__pkg__",
     ],
     deps = [
         "//private/google-modules/bms/misc:bms-misc",
         "//private/google-modules/soc/gs:gs_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779-charger-spmi",
+    srcs = [
+        "max77779_charger_spmi.c",
+    ],
+    out = "max77779-charger-spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779_i2cm_spmi",
+    srcs = [
+        "max77779_i2cm_spmi.c",
+    ],
+    out = "max77779_i2cm_spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779_pmic_spmi",
+    srcs = [
+        "max77779_pmic_spmi.c",
+    ],
+    out = "max77779_pmic_spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779-vimon-spmi",
+    srcs = [
+        "max77779_vimon_spmi.c",
+    ],
+    out = "max77779-vimon-spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779-sp-spmi",
+    srcs = [
+        "max77779_sp_spmi.c",
+    ],
+    out = "max77779-sp-spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "max77779-fg-spmi",
+    srcs = [
+        "max77779_fg_spmi.c",
+    ],
+    out = "max77779-fg-spmi.ko",
+    kernel_build = "//private/devices/google/common:kernel",
+    deps = [
+        ":bms",
+        ":common_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/soc/rdo:rdo_soc_module",
     ],
 )

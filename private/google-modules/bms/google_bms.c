@@ -1055,25 +1055,12 @@ EXPORT_SYMBOL_GPL(gbms_msc_get_last_voltage_idx);
 
 /* skip tiers that have same c-rate */
 int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
-			  int vbatt, int temp_idx)
+			  int vbatt_idx, int temp_idx)
 {
 	int cc_max;
-	int vbatt_idx = 0;
 
 	if (!profile)
 		return 0;
-
-	while (vbatt_idx < profile->volt_nb_limits - 1 &&
-	       vbatt > profile->volt_limits[vbatt_idx])
-		vbatt_idx++;
-
-	if (vbatt_idx != profile->volt_nb_limits - 1) {
-		const int vt = profile->volt_limits[vbatt_idx];
-		const int headr = profile->fv_uv_resolution * 3;
-
-		if ((vt - vbatt) < headr)
-			vbatt_idx += 1;
-	}
 
 	if (temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
 		return vbatt_idx;
@@ -1385,6 +1372,8 @@ void gbms_tier_stats_init(struct gbms_ce_tier_stats *stats, int8_t idx)
 	stats->vtier_idx = idx;
 	stats->temp_idx = -1;
 	stats->soc_in = -1;
+	stats->temp_min = GBMS_TIER_TEMP_MIN_DEFAULT;
+	stats->temp_max = GBMS_TIER_TEMP_MAX_DEFAULT;
 }
 EXPORT_SYMBOL_GPL(gbms_tier_stats_init);
 
@@ -1480,7 +1469,7 @@ int gbms_tier_stats_cstr(char *buff, int size,
 			 const struct gbms_ce_tier_stats *tier_stat,
 			 bool verbose)
 {
-	const int soc_in = tier_stat->soc_in >> 8;
+	const qnum_t q_soc = qnum_from_q8_8(tier_stat->soc_in);
 	const long elap = tier_stat->time_fast + tier_stat->time_taper +
 			  tier_stat->time_other;
 
@@ -1502,9 +1491,9 @@ int gbms_tier_stats_cstr(char *buff, int size,
 		(verbose) ? ':' : ',');
 
 	len += scnprintf(&buff[len], size - len,
-		"%d.%d,%d,%d, %d,%d,%d, %d,%ld,%d, %d,%ld,%d, %d,%ld,%d",
-		soc_in,
-		tier_stat->soc_in & 0xff,
+		"%d.%02d,%d,%d, %d,%d,%d, %d,%ld,%d, %d,%ld,%d, %d,%ld,%d",
+		qnum_toint(q_soc),
+		qnum_fracdgt(q_soc),
 		tier_stat->cc_in,
 		tier_stat->temp_in,
 		tier_stat->time_fast,
@@ -1581,7 +1570,7 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len)
 		return ret;
 
 	/* Pack barcode area data in ASCII format */
-	strncpy(decode_sn, sn, pack_barcode_len);
+	memcpy(decode_sn, sn, pack_barcode_len);
 
 	/*
 	 * decode address
@@ -1595,7 +1584,8 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len)
 	pcb_sn = (sn[27] << 8) | sn[28];
 	tmp = (sn[25] << 8) | sn[26];
 	date = ((((tmp >> 9) & 0x3f) + 1980) * 10000) + ((tmp >> 5) & 0xf) * 100 + (tmp & 0x1F);
-	count += scnprintf(decode_sn + count, max_len, "%02d%02d%d%04X%c", sn[23], sn[24], date, pcb_sn, sn[29]);
+	count += scnprintf(decode_sn + count, max_len, "%02d%02d%d%04X%c",
+			   sn[23], sn[24], date, pcb_sn, sn[29]);
 	decode_sn[count] = '\0';
 
 	return 0;
