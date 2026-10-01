@@ -101,6 +101,8 @@ enum gbms_tags {
 	GBMS_TAG_RSBR = 0x52534252,
 	GBMS_TAG_RSOC = 0x52534F43, /* save soc */
 	GBMS_TAG_SUFG = 0x53554647, /* shutdown by user_request flag */
+	GBMS_TAG_WLFW = 0x574C4657, /* wlc fw version tag */
+	GBMS_TAG_QI22 = 0x51493232, /* wlc qi22 gpio enable */
 
 	/* Reboot scratch */
 	GBMS_TAG_RRS0 = 0x52525330,
@@ -210,7 +212,8 @@ static inline void gbee_destroy_device(void) { }
 
 static inline int gbee_storage02_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)
 { return -ENODEV; }
-static inline int gbee_storage_read_data_02(gbms_tag_t tag, void *data, size_t count, int idx, void *ptr)
+static inline int gbee_storage_read_data_02(gbms_tag_t tag, void *data, size_t count, int idx,
+					    void *ptr)
 { return -ENODEV; }
 
 static inline int gbee_storage01_info(gbms_tag_t tag, size_t *addr, size_t *count, void *ptr)

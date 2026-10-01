@@ -35,7 +35,7 @@ struct max77729_chgr_data {
 	struct device *dev;
 	struct power_supply *psy;
 	struct regmap *regmap;
-	int irq_gpio;
+	struct gpio_desc *irq_gpio;
 
 	struct gvotable_election *mode_votable;
 	struct gvotable_election *dc_suspend_votable;
@@ -794,6 +794,8 @@ static enum power_supply_property max77729_psy_props[] = {
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 };
 
 static int max77729_psy_get_property(struct power_supply *psy,
@@ -1080,14 +1082,13 @@ static int max77729_init_irq(struct i2c_client *client)
 	struct device *dev = &client->dev;
 	int ret = 0;
 
-	data->irq_gpio =
-		of_get_named_gpio(dev->of_node, "max77729,irq-gpio", 0);
-	if (data->irq_gpio < 0) {
+	data->irq_gpio = devm_gpiod_get(dev, "max77729,irq", GPIOD_IN);
+	if (IS_ERR(data->irq_gpio)) {
 		dev_err(dev, "failed get irq_gpio\n");
 		return -EINVAL;
 	}
 
-	client->irq = gpio_to_irq(data->irq_gpio);
+	client->irq = gpiod_to_irq(data->irq_gpio);
 	ret = devm_request_threaded_irq(data->dev, client->irq, NULL,
 					max77729_chgr_irq,
 					IRQF_TRIGGER_LOW |

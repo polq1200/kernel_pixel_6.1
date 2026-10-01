@@ -258,6 +258,7 @@ struct max1720x_chip {
 	struct maxfg_bypss_charglimt bypass_chargelimit;
 
 	bool present;
+	ktime_t not_present_start_time;
 
 	/* monitor timer register and battery removal bit */
 	struct delayed_work stuck_monitor_work;
@@ -500,12 +501,6 @@ static inline int reg_to_cycles(u32 val, int gauge_type)
 		/* LSB: 16% of one cycle */
 		return DIV_ROUND_CLOSEST(val * 16, 100);
 	}
-}
-
-static inline int reg_to_seconds(s16 val)
-{
-	/* LSB: 5.625 seconds */
-	return DIV_ROUND_CLOSEST((int) val * 5625, 1000);
 }
 
 /* b/177099997 TaskPeriod ----------------------------------------------- */
@@ -2430,7 +2425,7 @@ static int max1720x_current_offset_fix(struct max1720x_chip *chip)
 	return ret;
 }
 
-static int max1720x_monitor_log_learning_extend(char* buf, int len, struct maxfg_regmap *regmap)
+static int max1720x_monitor_log_learning_extend(char *buf, int len, struct maxfg_regmap *regmap)
 {
 	u16 cotrim, coff;
 	u16 data[2] = { 0 };
@@ -2521,6 +2516,56 @@ static int max1720x_clear_por(struct max1720x_chip *chip)
 				  MAX1720X_STATUS,
 				  MAX1720X_STATUS_POR,
 				  0x0);
+}
+
+#define NOT_PRESENT_TIME_THRESHOLD_S 3
+static int max1720x_battery_present_check(struct max1720x_chip *chip, const u16 data)
+{
+	int is_present = !(data & MAX1720X_STATUS_BST);
+
+	/* honest to the initial probe value */
+	if (chip->not_present_start_time == -1) {
+		chip->not_present_start_time = 0;
+		chip->present = is_present;
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "initial present:%d (%#x)", chip->present, data);
+
+		return is_present;
+	}
+
+	/* Handle state changes */
+	if (chip->present != is_present) {
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Present status changed: %d -> %d (%#x)",
+				      chip->present, is_present, data);
+
+		chip->present = is_present;
+
+		/* hold if the battery just became not present */
+		if (!is_present) {
+			is_present = 1;
+			chip->not_present_start_time = get_boot_sec();
+		} else {
+			/* Battery became present, reset counter */
+			chip->not_present_start_time = 0;
+		}
+	} else if (!is_present && chip->not_present_start_time) {
+		const ktime_t now = get_boot_sec();
+
+		/* Report as "present" until the threshold is met */
+		if ((now - chip->not_present_start_time) < NOT_PRESENT_TIME_THRESHOLD_S)
+			return 1;
+
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
+				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+				      "Battery not present confirmed: status=%#x, t=%lld",
+				      data, (long long)(now - chip->not_present_start_time));
+		chip->not_present_start_time = 0; // The threshold has passed, report "not present"
+	}
+
+	return is_present;
 }
 
 /* call holding chip->model_lock */
@@ -2714,14 +2759,11 @@ static int max1720x_get_property(struct power_supply *psy,
 			if (rc < 0)
 				break;
 
-			/* BST is 0 when the battery is present */
-			val->intval = !(data & MAX1720X_STATUS_BST);
-			if (chip->present != val->intval)
-				dev_warn(chip->dev, "present update:%d->%d (%#x)",
-					 chip->present, val->intval, data);
-			chip->present = val->intval;
+			/* filtering unstable momentary status bst bit readings */
+			val->intval = max1720x_battery_present_check(chip, data);
 
-			if (!val->intval)
+			/* BST is 0 when the battery is present */
+			if (data & MAX1720X_STATUS_BST)
 				break;
 
 			if (!chip->por)
@@ -2740,35 +2782,10 @@ static int max1720x_get_property(struct power_supply *psy,
 		max1720x_handle_update_filtercfg(chip, val->intval);
 		max1720x_handle_update_empty_voltage(chip, val->intval);
 		break;
-	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
-		err = REGMAP_READ(map, MAX1720X_TTE, &data);
-		if (err == 0)
-			val->intval = reg_to_seconds(data);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
-		err = REGMAP_READ(map, MAX1720X_TTF, &data);
-		if (err == 0)
-			val->intval = reg_to_seconds(data);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
-		val->intval = -1;
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 		rc = REGMAP_READ(map, MAX1720X_AVGVCELL, &data);
 		if (rc == 0)
 			val->intval = reg_to_micro_volt(data);
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
-		/* LSB: 20mV */
-		err = maxfg_reg_read(map, MAXFG_TAG_mmdv, &data);
-		if (err == 0)
-			val->intval = ((data >> 8) & 0xFF) * 20000;
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
-		/* LSB: 20mV */
-		err = maxfg_reg_read(map, MAXFG_TAG_mmdv, &data);
-		if (err == 0)
-			val->intval = (data & 0xFF) * 20000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		rc = maxfg_reg_read(map, MAXFG_TAG_vcel, &data);
@@ -3499,7 +3516,6 @@ static void max17201_fg_stuck_monitor_work(struct work_struct *work)
 	int ret;
 	bool was_stuck = chip->is_timer_stuck, was_br = chip->is_battery_removal;
 	bool need_reset = false;
-	u8 lotr, bpst, bpst_reset;
 
 	if (chip->por)
 		goto done;
@@ -3560,38 +3576,10 @@ static void max17201_fg_stuck_monitor_work(struct work_struct *work)
 
 	if (need_reset) {
 		dev_info(chip->dev, "max17201 stuck detected, initiating reset.\n");
-		/* check lotr version for NV storage allocation, go/maxfg-nvstorage */
-		ret = gbms_storage_read(GBMS_TAG_LOTR, &lotr, sizeof(lotr));
-		if (ret < 0) {
-			dev_err(chip->dev, "%s: failed to read LOTR, ret=%d.\n", __func__, ret);
-			goto done;
-		}
-
-		if (lotr == GBMS_LOTR_DEFAULT) {
-			ret = gbms_storage_read(GBMS_TAG_BPST, &bpst, sizeof(bpst));
-			if (ret < 0) {
-				dev_err(chip->dev, "%s: failed to read BPST, ret=%d.\n",
-					__func__, ret);
-				goto done;
-			}
-		}
 		mutex_lock(&chip->model_lock);
 		max1720x_full_reset(chip);
 		max17x0x_fg_reset(chip);
 		mutex_unlock(&chip->model_lock);
-		/* restore BPST into NV reg if needed */
-		if (lotr == GBMS_LOTR_DEFAULT) {
-			ret = gbms_storage_read(GBMS_TAG_BPST, &bpst_reset, sizeof(bpst_reset));
-			if (ret < 0)
-				dev_warn(chip->dev, "%s: failed to read BPST after reset, ret=%d.\n",
-					 __func__, ret);
-
-			if (ret == sizeof(bpst_reset) && bpst != bpst_reset) {
-				ret = gbms_storage_write(GBMS_TAG_BPST, &bpst, sizeof(bpst));
-				dev_info(chip->dev, "%s: restore BPST fail count %d->%d, ret=%d.\n",
-					 __func__, bpst_reset, bpst, ret);
-			}
-		}
 		chip->stuck_reset_retry--;
 	}
 
@@ -5060,8 +5048,8 @@ static int max1720x_model_load(struct max1720x_chip *chip)
 				ret);
 
 		/* update fullsocthr based on aafv */
-		max_m5_model_apply_aaf_fullsoc(chip->model_data,
-					       &chip->aafv_cfgs[chip->aafv_cur_idx]);
+		max_m5_model_apply_aafv_fullsoc(chip->model_data,
+						&chip->aafv_cfgs[chip->aafv_cur_idx]);
 
 		/* use the state from the DT when GMSR is invalid */
 	}
@@ -6097,8 +6085,7 @@ static int max17x0x_storage_iter(int index, gbms_tag_t *tag, void *ptr)
 	static gbms_tag_t keys[] = {GBMS_TAG_SNUM, GBMS_TAG_BCNT,
 				    GBMS_TAG_MXSN, GBMS_TAG_MXCN,
 				    GBMS_TAG_RAVG, GBMS_TAG_RFCN,
-				    GBMS_TAG_CMPC, GBMS_TAG_DXAC,
-				    GBMS_TAG_BPST};
+				    GBMS_TAG_CMPC, GBMS_TAG_DXAC};
 	const int count = ARRAY_SIZE(keys);
 
 
@@ -6177,16 +6164,7 @@ static int max17x0x_storage_read(gbms_tag_t tag, void *buff, size_t size,
 /*	MAX17201_COMP_UPDATE_CNT = MAX1720X_NVALRTTH, */
 		reg = NULL;
 		break;
-	case GBMS_TAG_BPST:
-		if (size != sizeof(u8))
-			return -ERANGE;
 
-		ret = REGMAP_READ(&chip->regmap_nvram, MAX1720X_NODSCTH, data);
-		if (ret < 0)
-			return ret;
-
-		*(u8 *)buff = data[0];
-		return size;
 	default:
 		reg = NULL;
 		break;
@@ -6204,7 +6182,6 @@ static int max17x0x_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 	int ret;
 	const struct maxfg_reg *reg;
 	struct max1720x_chip *chip = (struct max1720x_chip *)ptr;
-	u16 data;
 
 	switch (tag) {
 	case GBMS_TAG_MXCN:
@@ -6233,16 +6210,7 @@ static int max17x0x_storage_write(gbms_tag_t tag, const void *buff, size_t size,
 /*	MAX17201_COMP_UPDATE_CNT = MAX1720X_NVALRTTH, */
 		reg = NULL;
 		break;
-	case GBMS_TAG_BPST:
-		if (size != sizeof(u8))
-			return -ERANGE;
 
-		data = *(u8 *)buff;
-		ret = REGMAP_WRITE(&chip->regmap_nvram, MAX1720X_NODSCTH, data);
-		if (ret < 0)
-			return ret;
-
-		return size;
 	default:
 		reg = NULL;
 		break;
@@ -6350,12 +6318,11 @@ static int max1720x_init_irq(struct max1720x_chip *chip)
 						 "maxim,irqf-shared");
 	irqno = chip->primary->irq;
 	if (!irqno) {
-		int irq_gpio;
+		struct gpio_desc *irq_gpio;
 
-		irq_gpio = of_get_named_gpio(chip->dev->of_node,
-					     "maxim,irq-gpio", 0);
-		if (irq_gpio >= 0) {
-			chip->primary->irq = gpio_to_irq(irq_gpio);
+		irq_gpio = devm_gpiod_get(chip->dev, "maxim,irq", GPIOD_IN);
+		if (!IS_ERR(irq_gpio)) {
+			chip->primary->irq = gpiod_to_irq(irq_gpio);
 			if (chip->primary->irq <= 0) {
 				chip->primary->irq = 0;
 				dev_warn(chip->dev, "fg irq not available\n");
@@ -6640,15 +6607,13 @@ static int max1720x_probe(struct i2c_client *client,
 	chip->fake_battery = of_property_read_bool(dev->of_node, "maxim,no-battery") ? 0 : -1;
 	chip->primary = client;
 	chip->batt_id_defer_cnt = DEFAULT_BATTERY_ID_RETRIES;
+	chip->not_present_start_time = -1; /* initial value */
 	i2c_set_clientdata(client, chip);
 
 	/* NOTE: < 0 not avalable, it could be a bare MLB */
 	chip->gauge_type = max17xxx_read_gauge_type(chip);
 	if (chip->gauge_type < 0)
 		chip->gauge_type = -1;
-
-	if (chip->gauge_type == MAX_M5_GAUGE_TYPE)
-		chip->dev->init_name = "i2c-max77759_fg";
 
 	ret = of_property_read_u32(dev->of_node, "maxim,status-charge-threshold-ma",
 				   &data32);
