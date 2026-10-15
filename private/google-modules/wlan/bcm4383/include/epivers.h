@@ -18,7 +18,7 @@
  *
  * <<Broadcom-WL-IPTag/Dual:>>
  *
- * + epivers.py --key-comp-dir=../../../../components/dhd/src ../../../../build/dhd/android-v/gg_pixelsta5-gg/pcie@gg/source//include/epivers.h
+ * + epivers.py --key-comp-dir=../../../../components/dhd/src ../../../../build/dhd/android-u/gg_pixeltg4-gg/pcie@gg/source//include/epivers.h
  *
  * FILE-CSTYLED
  *
