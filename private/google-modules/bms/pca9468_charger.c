@@ -44,9 +44,9 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_ENABLE_WLC_DELAY_T	300	/* 300ms */
 
 /* Battery Threshold */
-#define PCA9468_DC_VBAT_MIN		3400000 /* uV */
+#define PCA9468_DC_VBAT_MIN		3000000 /* uV */
 /* Input Current Limit default value */
-#define PCA9468_IIN_CFG_DFT		2500000 /* uA*/
+#define PCA9468_IIN_CFG_DFT		4000000 /* uA*/
 /* Charging Float Voltage default value */
 #define PCA9468_VFLOAT_DFT		5000000	/* uV */
 /* Charging Sub Float Voltage default value */
@@ -71,7 +71,7 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_IIN_S_TH_DFT	10000000	/* uA */
 
 /* Maximum TA voltage threshold */
-#define PCA9468_TA_MAX_VOL		9800000 /* uV */
+#define PCA9468_TA_MAX_VOL		11000000 /* uV */
 /* Maximum TA current threshold, set to max(cc_max) / 2 */
 #define PCA9468_TA_MAX_CUR		2600000	 /* uA */
 /* Minimum TA current threshold */
@@ -94,8 +94,7 @@ static int adc_gain[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 #define PCA9468_IIN_CC_COMP_OFFSET	25000	/* uA */
 /* IIN_CC compensation offset in Power Limit Mode(Constant Power) TA */
 #define PCA9468_IIN_CC_COMP_OFFSET_CP	20000	/* uA */
-/* TA maximum voltage that can support CC in Constant Power Mode */
-#define PCA9468_TA_MAX_VOL_CP		9800000	/* 9760000uV --> 9800000uV */
+
 /* Offset for cc_max / 2 */
 #define PCA9468_IIN_MAX_OFFSET		0
 /* Offset for TA max current */
@@ -965,15 +964,15 @@ static int pca9468_get_iin_original(struct pca9468_charger *pca9468, int *iin)
 
 static int pca9468_get_iin(struct pca9468_charger *pca9468, int *iin)
 {
-    int ret;
-    int temp;
+	int ret;
+	int temp;
 
-    ret = pca9468_get_iin_original(pca9468, &temp);
-    if (ret < 0)
-        return ret;
+	ret = pca9468_get_iin_original(pca9468, &temp);
+	if (ret < 0)
+		return ret;
 
-    *iin = temp * 2;
-    return 0;
+	*iin = temp * 2;
+	return 0;
 }
 
 static int pca9468_get_batt_info(struct pca9468_charger *pca9468, int info_type, int *info)
@@ -1884,8 +1883,14 @@ error:
 static void pca9468_return_to_loop(struct pca9468_charger *pca9468)
 {
 	switch (pca9468->ret_state) {
+	case DC_STATE_ADJUST_CC:
+		pca9468->timer_id = TIMER_ADJUST_CCMODE;
+		break;
 	case DC_STATE_CC_MODE:
 		pca9468->timer_id = TIMER_CHECK_CCMODE;
+		break;
+	case DC_STATE_START_CV:
+		pca9468->timer_id = TIMER_ENTER_CVMODE;
 		break;
 	case DC_STATE_CV_MODE:
 		pca9468->timer_id = TIMER_CHECK_CVMODE;
@@ -2355,7 +2360,8 @@ static int pca9468_apply_new_vfloat(struct pca9468_charger *pca9468)
 		goto error_done;
 
 	/* Restart the process if tier switch happened (either direction) */
-	if (pca9468->charging_state == DC_STATE_CV_MODE &&
+	if ((pca9468->charging_state == DC_STATE_CV_MODE ||
+	     pca9468->charging_state == DC_STATE_START_CV) &&
 	    abs(pca9468->new_vfloat - pca9468->fv_uv) > PCA9468_TIER_SWITCH_DELTA) {
 		ret = pca9468_reset_dcmode(pca9468);
 		if (ret < 0) {
@@ -2612,11 +2618,26 @@ static int pca9468_vote_dc_avail(struct pca9468_charger *pca9468, int vote, int 
 			dev_err(pca9468->dev, "Unable to cast vote for DC Chg avail (%d)\n", ret);
 	}
 
-	logbuffer_prlog(pca9468, pca9468->charging_state == DC_STATE_ERROR ?
-			LOGLEVEL_INFO : LOGLEVEL_DEBUG,
-			"%s: Voting dc_avail when in error state", __func__);
+	if (pca9468->charging_state == DC_STATE_ERROR)
+		logbuffer_prlog(pca9468, LOGLEVEL_INFO,
+				"%s: Voting dc_avail when in error state", __func__);
 
 	return ret;
+}
+
+/* <0 error, 0 no new limits, >0 new limits */
+static int pca9468_apply_new_limits(struct pca9468_charger *pca9468)
+{
+	int ret = -1;
+
+	if (pca9468->new_iin && pca9468->new_iin < pca9468->iin_cc)
+		ret = pca9468_apply_new_iin(pca9468);
+	else if (pca9468->new_vfloat)
+		ret = pca9468_apply_new_vfloat(pca9468);
+	else if (pca9468->new_iin)
+		ret = pca9468_apply_new_iin(pca9468);
+
+	return ret == 0 ? 1 : 0;
 }
 
 /* 2:1 Direct Charging Adjust CC MODE control
@@ -2642,6 +2663,12 @@ static int pca9468_charge_adjust_ccmode(struct pca9468_charger *pca9468)
 	ret = pca9468_check_error(pca9468);
 	if (ret != 0)
 		goto error; // This is not active mode.
+
+	ret = pca9468_apply_new_limits(pca9468);
+	if (ret < 0)
+		goto error;
+	if (ret > 0)
+		goto done;
 
 	ccmode = pca9468_check_status(pca9468);
 	if (ccmode < 0) {
@@ -2732,35 +2759,12 @@ static int pca9468_charge_adjust_ccmode(struct pca9468_charger *pca9468)
 		goto error;
 	}
 
+done:
 	mod_delayed_work(pca9468->dc_wq, &pca9468->timer_work,
 			 msecs_to_jiffies(pca9468->timer_period));
 error:
 	mutex_unlock(&pca9468->lock);
 	pr_debug("%s: End, ret=%d\n", __func__, ret);
-	return ret;
-}
-
-/* <0 error, 0 no new limits, >0 new limits */
-static int pca9468_apply_new_limits(struct pca9468_charger *pca9468)
-{
-	int ret = 0;
-
-	if (pca9468->new_iin && pca9468->new_iin < pca9468->iin_cc) {
-		ret = pca9468_apply_new_iin(pca9468);
-		if (ret == 0)
-			ret = 1;
-	} else if (pca9468->new_vfloat) {
-		ret = pca9468_apply_new_vfloat(pca9468);
-		if (ret == 0)
-			ret = 1;
-	} else if (pca9468->new_iin) {
-		ret = pca9468_apply_new_iin(pca9468);
-		if (ret == 0)
-			ret = 1;
-	} else {
-		return 0;
-	}
-
 	return ret;
 }
 
@@ -2932,6 +2936,12 @@ static int pca9468_charge_start_cvmode(struct pca9468_charger *pca9468)
 	if (ret != 0)
 		goto error_exit;
 
+	ret = pca9468_apply_new_limits(pca9468);
+	if (ret < 0)
+		goto error_exit;
+	if (ret > 0)
+		goto done;
+
 	/* Check the status */
 	cvmode = pca9468_check_status(pca9468);
 	if (cvmode < 0) {
@@ -3030,6 +3040,7 @@ static int pca9468_charge_start_cvmode(struct pca9468_charger *pca9468)
 		break;
 	}
 
+done:
 	mod_delayed_work(pca9468->dc_wq, &pca9468->timer_work,
 			 msecs_to_jiffies(pca9468->timer_period));
 error_exit:
@@ -4230,11 +4241,11 @@ static int pca9468_irq_init(struct pca9468_charger *pca9468,
 	const struct pca9468_platform_data *pdata = pca9468->pdata;
 	int ret, msk, irq;
 
-	irq = gpio_to_irq(pdata->irq_gpio);
-
-	ret = gpio_request_one(pdata->irq_gpio, GPIOF_IN, client->name);
-	if (ret < 0)
+	irq = gpiod_to_irq(pdata->irq_gpio);
+	if (irq < 0) {
+		ret = irq;
 		goto fail;
+	}
 
 	ret = request_threaded_irq(irq, NULL, pca9468_interrupt_handler,
 				   IRQF_TRIGGER_LOW | IRQF_ONESHOT,
@@ -4261,7 +4272,7 @@ static int pca9468_irq_init(struct pca9468_charger *pca9468,
 fail_write:
 	free_irq(irq, pca9468);
 fail_gpio:
-	gpio_free(pdata->irq_gpio);
+	gpiod_put(pdata->irq_gpio);
 fail:
 	client->irq = 0;
 	return ret;
@@ -4402,7 +4413,6 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 
 		break;
 
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = pca9468_set_new_vfloat(pca9468, val->intval);
 		break;
@@ -4413,7 +4423,6 @@ static int pca9468_mains_set_property(struct power_supply *psy,
 	 * NOTE: iin should be equivalent to iin = cc_max /2
 	 */
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 		ret = pca9468_set_new_cc_max(pca9468, val->intval);
 		break;
 
@@ -4458,7 +4467,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 			val->intval = 0;
 		break;
 
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 		ret = pca9468_const_charge_voltage(pca9468);
 		if (ret < 0)
@@ -4466,7 +4474,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 		val->intval = ret;
 		break;
 
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
 		ret = get_const_charge_current(pca9468);
 		if (ret < 0)
@@ -4531,8 +4538,6 @@ static int pca9468_mains_get_property(struct power_supply *psy,
 
 /*
  * GBMS not visible
- * POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
- * POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
  * POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
  * POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
  */
@@ -4560,7 +4565,6 @@ static int pca9468_mains_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		return 1;
@@ -4662,7 +4666,6 @@ static int pca9468_gbms_mains_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
-	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case GBMS_PROP_CHARGING_ENABLED:
@@ -4727,8 +4730,11 @@ static int of_pca9468_dt(struct device *dev,
 		return -EINVAL;
 
 	/* irq gpio */
-	pdata->irq_gpio = of_get_named_gpio(np_pca9468, "pca9468,irq-gpio", 0);
-	pr_info("%s: irq-gpio: %d \n", __func__, pdata->irq_gpio);
+	pdata->irq_gpio = devm_gpiod_get(dev, "pca9468,irq", GPIOD_IN);
+	pr_info("%s: irq-gpio: %d \n", __func__,
+		(IS_ERR_OR_NULL(pdata->irq_gpio)
+		 ? (int)PTR_ERR(pdata->irq_gpio)
+		 : desc_to_gpio(pdata->irq_gpio)));
 
 	/* input current limit */
 	ret = of_property_read_u32(np_pca9468, "pca9468,input-current-limit",
@@ -5236,7 +5242,7 @@ static int pca9468_probe(struct i2c_client *client,
 	if (ret < 0) {
 		pr_warn("pca9468: PPS not available (%d)\n", ret);
 	} else {
-		const char *logname = "pca9468";
+		const char *logname = "dc_mains";
 
 		pca9468_chg->log = logbuffer_register(logname);
 		if (IS_ERR(pca9468_chg->log)) {
@@ -5267,7 +5273,7 @@ static int pca9468_probe(struct i2c_client *client,
 	}
 
 	/* Interrupt pin is optional. */
-	if (pdata->irq_gpio >= 0) {
+	if (!IS_ERR_OR_NULL(pdata->irq_gpio)) {
 		ret = pca9468_irq_init(pca9468_chg, client);
 		if (ret < 0) {
 			dev_warn(dev, "failed to initialize IRQ: %d\n", ret);
@@ -5321,7 +5327,7 @@ static void pca9468_remove(struct i2c_client *client)
 
 	if (client->irq) {
 		free_irq(client->irq, pca9468_chg);
-		gpio_free(pca9468_chg->pdata->irq_gpio);
+		gpiod_put(pca9468_chg->pdata->irq_gpio);
 	}
 
 	destroy_workqueue(pca9468_chg->dc_wq);
@@ -5456,8 +5462,7 @@ static int pca9468_resume(struct device *dev)
 #endif
 
 const struct dev_pm_ops pca9468_pm_ops = {
-	.suspend = pca9468_suspend,
-	.resume = pca9468_resume,
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(pca9468_suspend, pca9468_resume)
 };
 
 static struct i2c_driver pca9468_driver = {

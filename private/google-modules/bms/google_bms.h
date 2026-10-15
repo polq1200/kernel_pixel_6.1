@@ -142,39 +142,37 @@ struct gbms_chg_profile {
 	bool enable_switch_chg_profile;
 };
 
-typedef struct {
-    char *temp_limits[GBMS_AACT_NB_LIMITS_MAX];
-    char *cv_limits[GBMS_AACT_NB_LIMITS_MAX];
-    char *cc_limits[GBMS_AACT_NB_LIMITS_MAX];
-} aact_limits_profiles_t;
-
-/* the number should be the same as GBMS_AACT_NB_LIMITS_MAX */
-static aact_limits_profiles_t aact_all_limits = {
-    .temp_limits = {
-        "google,aact-temp-limits",
-        "google,aact-temp-limits-1",
-        "google,aact-temp-limits-2",
-        "google,aact-temp-limits-3",
-        "google,aact-temp-limits-4"
-    },
-    .cv_limits = {
-        "google,aact-cv-limits",
-        "google,aact-cv-limits-1",
-        "google,aact-cv-limits-2",
-        "google,aact-cv-limits-3",
-        "google,aact-cv-limits-4"
-    },
-    .cc_limits = {
-        "google,aact-cc-limits",
-        "google,aact-cc-limits-1",
-        "google,aact-cc-limits-2",
-        "google,aact-cc-limits-3",
-        "google,aact-cc-limits-4"
-    }
+struct aact_limits_profiles {
+	char *temp_limits[GBMS_AACT_NB_LIMITS_MAX];
+	char *cv_limits[GBMS_AACT_NB_LIMITS_MAX];
+	char *cc_limits[GBMS_AACT_NB_LIMITS_MAX];
 };
 
-#define WLC_BPP_THRESHOLD_UV	7000000
-#define WLC_EPP_THRESHOLD_UV	11000000
+/* the number should be the same as GBMS_AACT_NB_LIMITS_MAX */
+static struct aact_limits_profiles aact_all_limits = {
+	.temp_limits = {
+		"google,aact-temp-limits",
+		"google,aact-temp-limits-1",
+		"google,aact-temp-limits-2",
+		"google,aact-temp-limits-3",
+		"google,aact-temp-limits-4"
+	},
+	.cv_limits = {
+		"google,aact-cv-limits",
+		"google,aact-cv-limits-1",
+		"google,aact-cv-limits-2",
+		"google,aact-cv-limits-3",
+		"google,aact-cv-limits-4"
+	},
+	.cc_limits = {
+		"google,aact-cc-limits",
+		"google,aact-cc-limits-1",
+		"google,aact-cc-limits-2",
+		"google,aact-cc-limits-3",
+		"google,aact-cc-limits-4"
+	}
+};
+
 
 #define FOREACH_CHG_EV_ADAPTER(S)		\
 	S(UNKNOWN), 	\
@@ -192,15 +190,15 @@ static aact_limits_profiles_t aact_all_limits = {
 	S(USB_HVDCP3),	\
 	S(FLOAT),	\
 	S(WLC),		\
-	S(WLC_EPP),	\
-	S(WLC_SPP),	\
-	S(GPP),		\
-	S(10W),		\
+	S(LEGACY_WLC_EPP),	\
+	S(LEGACY_WLC_SPP),	\
+	S(LEGACY_GPP),	\
+	S(LEGACY_10W),	\
 	S(L7),		\
 	S(DL),		\
 	S(WPC_EPP),	\
-	S(WPC_GPP),	\
-	S(WPC_10W),	\
+	S(LEGACY_WPC_GPP),	\
+	S(LEGACY_WPC_10W),	\
 	S(WPC_BPP),	\
 	S(WPC_L7),	\
 	S(EXT),	\
@@ -208,7 +206,9 @@ static aact_limits_profiles_t aact_all_limits = {
 	S(EXT2),	\
 	S(EXT_UNKNOWN), \
 	S(USB_UNKNOWN), \
-	S(WLC_UNKNOWN), \
+	S(LEGACY_WLC_UNKNOWN),	\
+	S(WPC_MPP),	\
+	S(WPC_MPP25),	\
 
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
@@ -279,6 +279,9 @@ struct ttf_tier_stat {
 	int	cc_total;
 	ktime_t	avg_time;
 };
+
+#define GBMS_TIER_TEMP_MIN_DEFAULT 0x7FFF
+#define GBMS_TIER_TEMP_MAX_DEFAULT -0x8000
 
 struct gbms_ce_tier_stats {
 	int8_t		temp_idx;
@@ -675,10 +678,9 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
 #define REASON_THERM		"THERMAL_DAEMON_VOTER"
-#define MSC_PWR_VOTER		"msc_pwr_disable"
-#define DEFENDER_ENABLED_VOTER "DEFENDER_ENABLED_VOTER"
-#define WLC_DEFENDER_VOTABLE "WLC_DEFENDER"
+
 #define VOTABLE_FORCE_5V	"FORCE_5V"
+#define WLC_VOTER		"WLC_VOTER"
 
 #define HDA_TZ_NONE		(0)
 #define HDA_TZ_WLC_ADAPTER	(1)
@@ -712,7 +714,6 @@ int gbms_cycle_count_cstr_bc(char *buff, size_t size,
 
 #define gbms_cycle_count_cstr(buff, size, cc)	\
 	gbms_cycle_count_cstr_bc(buff, size, cc, GBMS_CCBIN_BUCKET_COUNT)
-
 
 /* Time to full */
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
@@ -812,17 +813,24 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len);
  */
 
 enum gbms_charger_modes {
-	GBMS_CHGR_MODE_CHGR_DC	= 0x20,
+	GBMS_CHGR_MODE_CHGR_DC_USB	= 0x20,
+	GBMS_CHGR_MODE_CHGR_DC_WLC	= 0x21,
 
-	GBMS_USB_BUCK_ON	= 0x30,
-	GBMS_USB_OTG_ON 	= 0x31,
-	GBMS_USB_OTG_FRS_ON	= 0x32,
+	GBMS_USB_BUCK_ON		= 0x30,
+	GBMS_USB_OTG_ON			= 0x31,
+	GBMS_USB_OTG_FRS_ON		= 0x32,
 
-	GBMS_CHGR_MODE_WLC_RX	= 0x39,
-	GBMS_CHGR_MODE_WLC_TX	= 0x40,
+	GBMS_CHGR_MODE_WLC_RX		= 0x39,
+	GBMS_CHGR_MODE_WLC_TX		= 0x40,
 
-	GBMS_POGO_VIN		= 0x50,
-	GBMS_POGO_VOUT		= 0x51,
+	GBMS_POGO_VIN			= 0x50,
+	GBMS_POGO_VOUT			= 0x51,
+};
+
+enum gbms_chg_select {
+	GBMS_CHGR_SEL_NONE,
+	GBMS_CHGR_SEL_USB,
+	GBMS_CHGR_SEL_WIRELESS,
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
@@ -922,6 +930,9 @@ enum csi_status {
 	CSI_STATUS_Charging = 200,	// All good
 };
 
+#define CSI_POWER_UNKNOWN	-1
+#define CSI_POWER_ZERO		0
+
 #define CSI_TYPE_MASK_UNKNOWN		(1 << 0)
 #define CSI_TYPE_MASK_NONE		(1 << 1)
 #define CSI_TYPE_MASK_FAULT		(1 << 2)
@@ -962,6 +973,9 @@ enum charging_state {
 #define LONGLIFE_CHARGE_START_LEVEL 77
 #define ADAPTIVE_ALWAYS_ON_SOC 80
 
+/* Input values for userspace clients.
+ * Use `charging_policy_translate` to convert to internal values.
+ */
 enum charging_policy {
        CHARGING_POLICY_UNKNOWN = -1,
 
@@ -975,13 +989,26 @@ enum charging_policy {
  * and AC also must take precedence over the AON limit.
  */
 enum charging_policy_vote {
-       CHARGING_POLICY_VOTE_UNKNOWN = -1,
+	CHARGING_POLICY_VOTE_UNKNOWN = -1,
 
-       CHARGING_POLICY_VOTE_DEFAULT = 1,
-       CHARGING_POLICY_VOTE_ADAPTIVE_AON = 2,
-       CHARGING_POLICY_VOTE_ADAPTIVE_AC = 3,
-       CHARGING_POLICY_VOTE_LONGLIFE = 4,
-       CHARGING_POLICY_VOTE_FORCE_FULL_CHARGE = 5,
+	CHARGING_POLICY_VOTE_DEFAULT = 1,
+	CHARGING_POLICY_VOTE_ADAPTIVE_AON = 2,
+	CHARGING_POLICY_VOTE_ADAPTIVE_AC = 3,
+	CHARGING_POLICY_VOTE_LONGLIFE = 4,
+	CHARGING_POLICY_VOTE_FORCE_FULL_CHARGE = 5,
+};
+
+/* Output values for userspace clients.
+ * Use `charging_policy_translate_to_userspace` to convert from internal values.
+ */
+enum charging_policy_out {
+	CHARGING_POLICY_OUT_UNKNOWN = -1,
+
+	CHARGING_POLICY_OUT_DEFAULT = 1,
+	CHARGING_POLICY_OUT_ADAPTIVE_AON = 2,
+	CHARGING_POLICY_OUT_ADAPTIVE_AC = 3,
+	CHARGING_POLICY_OUT_LONGLIFE = 4,
+	CHARGING_POLICY_OUT_FORCE_FULL_CHARGE = 5,
 };
 
 #define to_cooling_device(_dev)	\
@@ -1023,6 +1050,7 @@ enum monitor_log_tags {
 	MONITOR_TAG_HV = 0x4856, /* result of EEPROM history validation */
 	MONITOR_TAG_LH = 0x4C48, /* registers snapshot by learning event */
 	MONITOR_TAG_RM = 0x524D, /* registers snapshot by regular monitor */
+	MONITOR_TAG_WL = 0x574C, /* result of wlc firmware update */
 };
 
 /* BMS firmware update */

@@ -16,7 +16,8 @@
 #ifndef __P9221_CHARGER_H__
 #define __P9221_CHARGER_H__
 
-#include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
+#include <linux/gpio/driver.h>
 #include <linux/crc8.h>
 #include <misc/gvotable.h>
 #include "gbms_power_supply.h"
@@ -107,11 +108,6 @@
 #define I2C_LOG_NUM			128
 #define ICL_STABLE_TIME_MS		(30 * 1000)
 
-#define BPP_5W_POWER			5000
-#define EPP_10W_POWER			10000
-#define GPP_10W_POWER			10000
-#define GPP_15W_POWER			15000 // gpp_enhanced
-#define HPP_23W_POWER			23000
 
 /*
  * P9221 common registers
@@ -715,52 +711,24 @@ struct p9221_fod_data {
 	u8 fod[P9221R5_NUM_FOD];
 };
 
-struct wlc_adapter_capabilities_1_fields {
-	u16 ptmc;
-	u16 reserved;
-};
-
-struct wlc_adapter_capabilities_2_fields {
-	u16 nego_power;
-	u16 reserved;
-};
-
-struct wlc_adapter_capabilities_4_fields {
-	uint8_t flag_prop_mode : 1;
-	uint8_t flag_negotiation : 1;
-	uint8_t flag_wlc_dc : 1;
-	uint8_t flag_prop_error : 1;
-	uint8_t flag_reserved : 4;
-	u8 potential_power;
-	int8_t compatibility;
-	u8 reserved;
-};
-
-struct wlc_receiver_state_1_fields {
-	u16 disconnect_total_count;
-	u16 irq_error_count;
-};
-
 struct p9221_charger_platform_data {
-	int				irq_gpio;
+	struct gpio_desc		*irq_gpio;
 	int				irq_int;
 	u64				irq_flag;
-	int				irq_det_gpio;
+	struct gpio_desc		*irq_det_gpio;
 	int				irq_det_int;
-	int				qien_gpio;
-	int				ldo_en_gpio;
-	int				slct_gpio;
+	struct gpio_desc		*qien_gpio;
+	struct gpio_desc		*ldo_en_gpio;
+	struct gpio_desc		*slct_gpio;
 	int				slct_value;
-	int				ben_gpio;
-	int				ext_ben_gpio;
-	int				switch_gpio;
-	int				boost_gpio;
-	int				dc_switch_gpio;
-	int				wcin_inlim_en_gpio;
-	int				qi_vbus_en;
-	int				qi_vbus_en_act_low;
-	int				wlc_en;
-	int				wlc_en_act_low;
+	struct gpio_desc		*ben_gpio;
+	struct gpio_desc		*ext_ben_gpio;
+	struct gpio_desc		*switch_gpio;
+	struct gpio_desc		*boost_gpio;
+	struct gpio_desc		*dc_switch_gpio;
+	struct gpio_desc		*wcin_inlim_en_gpio;
+	struct gpio_desc		*qi_vbus_en;
+	struct gpio_desc		*wlc_en;
 	int				max_vout_mv;
 	int				epp_vout_mv;
 	u8				fod[P9221R5_NUM_FOD];
@@ -900,7 +868,6 @@ struct p9221_charger_data {
 	struct gvotable_election	*disable_dcin_en_votable;
 	struct gvotable_election	*chg_mode_votable;
 	struct gvotable_election	*wlc_disable_votable;
-	struct gvotable_election	*defender_enabled_votable;
 	struct gvotable_election	*csi_status_votable;
 	struct gvotable_election	*csi_type_votable;
 	struct gvotable_election	*point_full_ui_soc_votable;
@@ -931,11 +898,8 @@ struct p9221_charger_data {
 	struct delayed_work		chk_rtx_ocp_work;
 	struct delayed_work		chk_fod_work;
 	struct delayed_work		set_rf_work;
-	struct delayed_work		presence_check_work;
 	struct delayed_work		icl_stable_work;
-	struct work_struct		wlc_uevent_work;
-	struct work_struct		fan_uevent_work;
-	struct work_struct		rtx_uevent_work;
+	struct work_struct		uevent_work;
 	struct work_struct		calibration_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;
@@ -1031,7 +995,6 @@ struct p9221_charger_data {
 	u32				wlc_ocp;
 	u8				wlc_ovp;
 	struct mutex			stats_lock;
-	struct mutex			presence_check_lock;
 	struct p9221_charge_stats	chg_data;
 	u32				mitigate_threshold;
 	u32				fod_cnt;
@@ -1051,8 +1014,6 @@ struct p9221_charger_data {
 	struct mutex			renego_lock;
 	bool				send_eop;
 	wait_queue_head_t		ccreset_wq;
-	atomic_t			charger_present_flag;
-	atomic_t			dwell_defend_disabling_flag;
 	bool				cc_reset_pending;
 	bool				set_auth_icl;
 	int				send_txid_cnt;
@@ -1078,7 +1039,6 @@ struct p9221_charger_data {
 	int				fan_last_level;
 	int				compatibility;
 	int				disconnect_total_count;
-	int				irq_error_count;
 
 #if IS_ENABLED(CONFIG_GPIOLIB)
 	struct gpio_chip gpio;
@@ -1096,8 +1056,6 @@ struct p9221_charger_data {
 	u32				de_hpp_neg_pwr;
 	u32				de_epp_neg_pwr;
 	u32				de_wait_prop_irq_ms;
-	u8				prop_err;
-	u8				txpwr;
 
 	u16				reg_tx_id_addr;
 	u16				reg_tx_mfg_code_addr;
@@ -1116,7 +1074,6 @@ struct p9221_charger_data {
 	u16				reg_epp_tx_guarpwr_addr;
 	u16				reg_freq_limit_addr;
 	u16				reg_ask_mod_fet_addr;
-	u16				reg_nego_power_addr;
 
 	int (*reg_read_n)(struct p9221_charger_data *chgr, u16 reg,
 			  void *buf, size_t n);
@@ -1186,7 +1143,7 @@ bool p9xxx_is_capdiv_en(struct p9221_charger_data *charger);
 int p9221_wlc_disable(struct p9221_charger_data *charger, int disable, u8 reason);
 int p9221_set_auth_dc_icl(struct p9221_charger_data *charger, bool enable);
 int p9xxx_sw_ramp_icl(struct p9221_charger_data *charger, const int icl_target);
-int p9xxx_gpio_set_value(struct p9221_charger_data *charger, int gpio, int value);
+int p9xxx_gpio_set_value(struct p9221_charger_data *charger, struct gpio_desc *gpio, int value);
 bool is_ping_freq_fixed_at(struct p9221_charger_data *charger, u32 khz);
 void p9221_uevent(struct p9221_charger_data *charger, u8 id);
 
@@ -1308,8 +1265,6 @@ enum compatibility_type {
       -ENOTSUPP : chgr->reg_write_16(chgr, chgr->reg_freq_limit_addr, data))
 #define p9xxx_chip_set_ask_mod_fet(chgr, data) ((chgr->reg_ask_mod_fet_addr == 0 || data == 0) ? \
       -ENOTSUPP : chgr->reg_write_8(chgr, chgr->reg_ask_mod_fet_addr, data))
-#define p9xxx_chip_get_nego_power(chgr, data) (chgr->reg_nego_power_addr < 0 ? \
-      -ENOTSUPP : chgr->reg_read_8(chgr, chgr->reg_nego_power_addr, data))
 #define logbuffer_prlog(p, fmt, ...)     \
       gbms_logbuffer_prlog(p, LOGLEVEL_INFO, 0, LOGLEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #endif /* __P9221_CHARGER_H__ */
