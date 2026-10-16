@@ -233,7 +233,7 @@ CONFIG_S3C2410_WATCHDOG_GS=m
 CONFIG_S3C2410_SHUTDOWN_REBOOT=y
 
 # private/google-modules/bms/misc/Kconfig
-#CONFIG_GOOGLE_LOGBUFFER=m
+CONFIG_GOOGLE_LOGBUFFER=m
 
 # private/google-modules/display/common/Kconfig
 CONFIG_GS_DRM_PANEL_UNIFIED=m
