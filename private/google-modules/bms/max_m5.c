@@ -1689,7 +1689,7 @@ int max_m5_regmap_init(struct maxfg_regmap *regmap, struct i2c_client *clnt)
  *  - before the model data is loaded using max1720x_model_load,
  *    these values must be updated based on aafv.
  */
-void max_m5_model_apply_aaf_fullsoc(struct max_m5_data *m5_data, const struct aafv_fg_config *cfg)
+void max_m5_model_apply_aafv_fullsoc(struct max_m5_data *m5_data, const struct aafv_fg_config *cfg)
 {
 	struct max_m5_custom_parameters *cp = &m5_data->parameters;
 

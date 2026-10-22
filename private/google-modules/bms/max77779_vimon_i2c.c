@@ -107,6 +107,7 @@ static int max77779_vimon_i2c_probe(struct i2c_client *client, const struct i2c_
 		return -ENOMEM;
 
 	data->dev = dev;
+	data->dev->init_name = "i2c-max77779-vimon";
 	data->regmap = regmap;
 	data->irq = client->irq;
 	i2c_set_clientdata(client, data);

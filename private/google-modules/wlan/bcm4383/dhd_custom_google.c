@@ -48,6 +48,10 @@
 #endif  /* CONFIG_PCI_EXYNOS_GS */
 #endif /* CONFIG_SOC_GOOGLE */
 
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+#include <soc/google/google-cdd.h>
+#endif
+
 #ifdef DHD_COREDUMP
 #include <linux/platform_data/sscoredump.h>
 #endif /* DHD_COREDUMP */
@@ -55,6 +59,8 @@
 #ifdef DHD_HOST_CPUFREQ_BOOST
 #include <linux/cpufreq.h>
 #endif /* DHD_HOST_CPUFREQ_BOOST */
+
+#include <bcmstdlib_s.h>
 
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 #define GOOGLE_PCIE_VENDOR_ID 0x144d
@@ -65,6 +71,17 @@
 #define GOOGLE_PCIE_DEVICE_ID 0xc001
 #define GOOGLE_PCIE_CH_NUM 0
 #endif /* CONFIG_PCI_EXYNOS_GS */
+
+#if IS_ENABLED(CONFIG_SOC_LGA)
+#define MSI_MASK_REG 0x3c80082c
+#define MSI_STAT_REG 0x3c800830
+#define PCI_ICDS_REG 0x3c009554
+#endif
+
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+#define CDD_WIFI_STAT_PCIE_LINK_UP BIT(0)
+uint32_t gcdd_wifi_stat;
+#endif
 
 #if !IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 uint32 support_l1ss;
@@ -89,28 +106,26 @@ static int wlan_reg_on = -1;
 
 static int wlan_host_wake_up = -1;
 #ifdef CONFIG_BCMDHD_OOB_HOST_WAKE
-static int wlan_host_wake_irq = 0;
+static int wlan_host_wake_irq;
 #endif /* CONFIG_BCMDHD_OOB_HOST_WAKE */
 #define WIFI_WLAN_HOST_WAKE_PROPNAME    "wl_host_wake"
 
-#if defined(DHD_CUSTOM_PKT_COUNT_ENABLE)
-static uint64 tx_pkt_cnt = 0;
-static uint64 rx_pkt_cnt = 0;
-static uint64 tx_pkt_timestamp = 0;
-static uint64 rx_pkt_timestamp = 0;
-static uint64 tx_pkt_delta = 0;
-static uint64 rx_pkt_delta = 0;
-#else
-static int resched_streak = 0;
-static int resched_streak_max = 0;
-#endif
+static uint64 tx_pkt_cnt;
+static uint64 rx_pkt_cnt;
+static uint64 tx_pkt_timestamp;
+static uint64 rx_pkt_timestamp;
+static uint64 tx_pkt_delta;
+static uint64 rx_pkt_delta;
 
-static uint64 last_resched_cnt_check_time_ns = 0;
-static uint64 last_affinity_update_time_ns = 0;
-static uint hw_stage_val = 0;
-static bool is_irq_on_big_core = FALSE;
+static uint64 last_resched_cnt_check_time_ns;
+static uint64 last_affinity_update_time_ns;
+static uint hw_stage_val;
 /* force to switch to small core at beginning */
-static bool is_plat_pcie_resume = TRUE;
+static bool is_irq_on_big_core = TRUE;
+static bool is_plat_pcie_resume = FALSE;
+
+uint affinity_big_core;
+uint affinity_small_core;
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 extern int exynos_pcie_register_event(struct exynos_pcie_register_event *reg);
 extern int exynos_pcie_deregister_event(struct exynos_pcie_register_event *reg);
@@ -124,13 +139,17 @@ extern int exynos_pcie_rc_l1ss_ctrl(int enable, int id, int ch_num);
 extern void exynos_pcie_register_dump(int ch_num);
 #endif /* EXYNOS_PCIE_DEBUG */
 #ifdef PRINT_WAKEUP_GPIO_STATUS
-extern void exynos_pin_dbg_show(unsigned int pin, const char* str);
+extern void exynos_pin_dbg_show(unsigned int pin, const char *str);
 #endif /* PRINT_WAKEUP_GPIO_STATUS */
 
 #ifdef DHD_TREAT_D3ACKTO_AS_LINKDWN
 extern void exynos_pcie_set_skip_config(int ch_num, bool val);
 #endif /* DHD_TREAT_D3ACKTO_AS_LINKDWN */
 #endif /* CONFIG_PCI_EXYNOS_GS */
+
+#if IS_ENABLED(CONFIG_SOC_LGA)
+extern void google_pcie_dump_debug(int num);
+#endif /* CONFIG_SOC_LGA */
 
 #ifdef DHD_COREDUMP
 #define DEVICE_NAME "wlan"
@@ -149,7 +168,7 @@ static struct platform_device sscd_dev = {
 
 /* Google PCIe interface */
 static int pcie_ch_num = GOOGLE_PCIE_CH_NUM;
-static dhd_pcie_event_cb_t g_pfn = NULL;
+static dhd_pcie_event_cb_t g_pfn;
 
 typedef struct dhd_plat_info {
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
@@ -172,6 +191,27 @@ int pcie_dummy_return(const char *s)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+void update_google_cdd_wifi_stat(uint32_t cdd_wifi_bitmap, bool enable)
+{
+	uint32_t value = gcdd_wifi_stat;
+
+	if (enable)
+		value |= cdd_wifi_bitmap;
+	else
+		value &= ~cdd_wifi_bitmap;
+
+	if (value == gcdd_wifi_stat)
+		return;
+
+	gcdd_wifi_stat = value;
+
+	google_cdd_set_system_dev_stat(CDD_SYSTEM_DEVICE_WIFI, gcdd_wifi_stat);
+}
+#else
+#define update_google_cdd_wifi_stat(bitmap, enable)
+#endif /* CONFIG_GOOGLE_CRASH_DEBUG_DUMP */
+
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 #define _pcie_pm_resume(ch) exynos_pcie_pm_resume(ch)
 #define _pcie_pm_suspend(ch) exynos_pcie_pm_suspend(ch)
@@ -193,17 +233,17 @@ _pcie_notify_cb(struct exynos_pcie_notify *pcie_notify)
 	struct pci_dev *pdev;
 
 	if (pcie_notify == NULL) {
-		DHD_TRACE(("%s(): Invalid argument to Platform layer call back \r\n", __func__));
+		DHD_ERROR(("%s(): Invalid argument to Platform layer call back \r\n", __func__));
 		return;
 	}
 
 	if (g_pfn) {
 		pdev = (struct pci_dev *)pcie_notify->user;
-		DHD_TRACE(("%s(): Invoking DHD call back with pdev %p \r\n",
+		DHD_ERROR(("%s(): Invoking DHD call back with pdev %p \r\n",
 			__func__, pdev));
 		(*(g_pfn))(pdev);
 	} else {
-		DHD_TRACE(("%s(): Driver Call back pointer is NULL \r\n", __func__));
+		DHD_ERROR(("%s(): Driver Call back pointer is NULL \r\n", __func__));
 	}
 }
 
@@ -257,17 +297,18 @@ static void google_pcie_event_cb(enum google_pcie_callback_type type, void *priv
 	struct pci_dev *pdev;
 
 	if (p == NULL) {
-		DHD_TRACE(("%s(): Invalid argument to platform layer call back \r\n", __func__));
+		DHD_ERROR(("%s(): Invalid argument to platform layer call back \r\n", __func__));
 		return;
 	}
 
 	if (g_pfn && (p->cb_events & BIT(type))) {
 		pdev = p->pdev;
-		DHD_TRACE(("%s(): Invoking DHD call back with pdev %p for event 0x%x\r\n",
-			__func__, pdev, type));
+		DHD_ERROR(("%s(): Invoking DHD call back with pdev %p for event 0x%x\r\n",
+				__func__, pdev, type));
 		(*(g_pfn))(pdev);
+
 	} else {
-		DHD_TRACE(("%s(): Skip callback for event 0x%x \r\n", __func__, type));
+		DHD_ERROR(("%s(): Skip callback for event 0x%x \r\n", __func__, type));
 	}
 
 }
@@ -285,7 +326,7 @@ int _pcie_register_event(void *plat_info, struct pci_dev *pdev, dhd_pcie_event_c
 	p->cb_events |= BIT(GPCIE_CB_CPL_TIMEOUT);
 #endif /* PCIE_CPL_TIMEOUT_RECOVERY */
 	DHD_TRACE(("%s(): Registering for PCIe events 0x%x with plat_info %p\r\n",
-		__func__, p->cb_events, p));
+			__func__, p->cb_events, p));
 	return google_pcie_register_callback(pdev->bus->domain_nr,
 			google_pcie_event_cb, p);
 }
@@ -333,14 +374,6 @@ typedef struct {
     char sku[MAX_HW_INFO_LEN];
 } sku_info_t;
 
-#if defined(BCM4383_CHIP_DEF)
-sku_info_t sku_table[] = {
-	{ {"G8HHN"}, {"MMW"} },
-	{ {"G6GPR"}, {"ROW"} },
-	{ {"G576D"}, {"JPN"} },
-	{ {"GKV4X"}, {"NA"} }
-};
-#else
 sku_info_t sku_table[] = {
 	{ {"G9S9B"}, {"MMW"} },
 	{ {"G8V0U"}, {"MMW"} },
@@ -350,6 +383,12 @@ sku_info_t sku_table[] = {
 	{ {"GQML3"}, {"MMW"} },
 	{ {"GKWS6"}, {"MMW"} },
 	{ {"G1MNW"}, {"MMW"} },
+	{ {"GR83Y"}, {"MMW"} },
+	{ {"GGX8B"}, {"MMW"} },
+	{ {"G2YBB"}, {"MMW"} },
+	{ {"GUL82"}, {"MMW"} },
+	{ {"G4QUR"}, {"MMW"} },
+	{ {"GU0NP"}, {"MMW"} },
 	{ {"GB7N6"}, {"ROW"} },
 	{ {"GLU0G"}, {"ROW"} },
 	{ {"GNA8F"}, {"ROW"} },
@@ -358,6 +397,11 @@ sku_info_t sku_table[] = {
 	{ {"GVU6C"}, {"ROW"} },
 	{ {"GPJ41"}, {"ROW"} },
 	{ {"GC3VE"}, {"ROW"} },
+	{ {"GEC77"}, {"ROW"} },
+	{ {"GZC4K"}, {"ROW"} },
+	{ {"GUR25"}, {"ROW"} },
+	{ {"G45RY"}, {"ROW"} },
+	{ {"GEHN3"}, {"ROW"} },
 	{ {"GR1YH"}, {"JPN"} },
 	{ {"GF5KQ"}, {"JPN"} },
 	{ {"GPQ72"}, {"JPN"} },
@@ -366,10 +410,17 @@ sku_info_t sku_table[] = {
 	{ {"G03Z5"}, {"JPN"} },
 	{ {"GE9DP"}, {"JPN"} },
 	{ {"GZPF0"}, {"JPN"} },
+	{ {"GWVK6"}, {"JP"} },
+	{ {"GQ57S"}, {"JP"} },
+	{ {"G1B60"}, {"JP"} },
+	{ {"GYPW4"}, {"JP"} },
+	{ {"GN4F5"}, {"JP"} },
+	{ {"GM66V"}, {"JP"} },
 	{ {"G1AZG"}, {"EU"} },
-	{ {"G9BQD"}, {"NA"} }
+	{ {"G9BQD"}, {"NA"} },
+	{ {"G45RY"}, {"NA"} },
+	{ {"GEHN3"}, {"NA"} }
 };
-#endif /* BCM4383_CHIP_DEF */
 
 static int
 dhd_wlan_get_mac_addr(unsigned char *buf)
@@ -483,7 +534,7 @@ typedef struct platform_hw_info {
 platform_hw_info_t platform_hw_info;
 
 static void
-dhd_set_platform_ext_name(char *hw_rev, char* hw_sku)
+dhd_set_platform_ext_name(char *hw_rev, char *hw_sku)
 {
 	bzero(&platform_hw_info, sizeof(platform_hw_info_t));
 
@@ -510,7 +561,7 @@ dhd_set_platform_ext_name(char *hw_rev, char* hw_sku)
 }
 
 void
-dhd_set_platform_ext_name_for_chip_version(char* chip_version)
+dhd_set_platform_ext_name_for_chip_version(char *chip_version)
 {
 	if (strncmp(val_revision, DEFAULT_VAL, MAX_HW_INFO_LEN) != 0) {
 		if (strncmp(val_sku, DEFAULT_VAL, MAX_HW_INFO_LEN) != 0) {
@@ -536,7 +587,7 @@ dhd_set_platform_ext_name_for_chip_version(char* chip_version)
 }
 
 static int
-dhd_check_file_exist(char* fname)
+dhd_check_file_exist(char *fname)
 {
 	int err = BCME_OK;
 #ifdef DHD_LINUX_STD_FW_API
@@ -606,15 +657,13 @@ dhd_get_platform_naming_for_nvram_clmblob_file(download_type_t component, char *
 #else
 		nvram_clmblob_file = CONFIG_BCMDHD_NVRAM_PATH;
 #endif /* DHD_LINUX_STD_FW_API */
-	}
-	else if (component == CLM_BLOB) {
+	} else if (component == CLM_BLOB) {
 #ifdef DHD_LINUX_STD_FW_API
 		nvram_clmblob_file = DHD_CLM_NAME;
 #else
 		nvram_clmblob_file = VENDOR_PATH CONFIG_BCMDHD_CLM_PATH;
 #endif /* DHD_LINUX_STD_FW_API */
-	}
-	else if (component == TXCAP_BLOB) {
+	} else if (component == TXCAP_BLOB) {
 #ifdef DHD_LINUX_STD_FW_API
 		nvram_clmblob_file = DHD_TXCAP_NAME;
 #else
@@ -672,33 +721,33 @@ dhd_wlan_init_hardware_info(void)
 		}
 		hw_stage_val = hw_stage;
 		switch (hw_stage) {
-			case DEV:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "DEV%d.%d",
-					hw_major, hw_minor);
-				break;
-			case PROTO:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "PROTO%d.%d",
-					hw_major, hw_minor);
-				break;
-			case EVT:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "EVT%d.%d",
-					hw_major, hw_minor);
-				break;
-			case DVT:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "DVT%d.%d",
-					hw_major, hw_minor);
-				break;
-			case PVT:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "PVT%d.%d",
-					hw_major, hw_minor);
-				break;
-			case MP:
-				snprintf(val_revision, MAX_HW_INFO_LEN, "MP%d.%d",
-					hw_major, hw_minor);
-				break;
-			default:
-				strcpy(val_revision, DEFAULT_VAL);
-				break;
+		case DEV:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "DEV%d.%d",
+				hw_major, hw_minor);
+			break;
+		case PROTO:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "PROTO%d.%d",
+				hw_major, hw_minor);
+			break;
+		case EVT:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "EVT%d.%d",
+				hw_major, hw_minor);
+			break;
+		case DVT:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "DVT%d.%d",
+				hw_major, hw_minor);
+			break;
+		case PVT:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "PVT%d.%d",
+				hw_major, hw_minor);
+			break;
+		case MP:
+			snprintf(val_revision, MAX_HW_INFO_LEN, "MP%d.%d",
+				hw_major, hw_minor);
+			break;
+		default:
+			strcpy(val_revision, DEFAULT_VAL);
+			break;
 		}
 	}
 
@@ -713,7 +762,7 @@ dhd_wlan_init_hardware_info(void)
 			goto exit;
 		}
 
-		for (i = 0; i < ARRAYSIZE(sku_table); i ++) {
+		for (i = 0; i < ARRAYSIZE(sku_table); i++) {
 			if (strcmp(hw_sku, sku_table[i].hw_id) == 0) {
 				strcpy(val_sku, sku_table[i].sku);
 				break;
@@ -734,7 +783,7 @@ dhd_wifi_init_gpio(void)
 {
 	int gpio_reg_on_val;
 	/* ========== WLAN_PWR_EN ============ */
-	char *wlan_node = DHD_DT_COMPAT_ENTRY;
+	const char *wlan_node = DHD_DT_COMPAT_ENTRY;
 	struct device_node *root_node = NULL;
 
 	root_node = of_find_compatible_node(NULL, NULL, wlan_node);
@@ -812,7 +861,7 @@ dhd_wlan_power(int onoff)
 {
 	DHD_INFO(("------------------------------------------------\n"));
 	DHD_INFO(("------------------------------------------------\n"));
-	DHD_INFO(("%s Enter: power %s\n", __func__, onoff ? "on" : "off"));
+	DHD_PRINT(("%s Enter: WL_REG_ON %s\n", __func__, onoff ? "pull up" : "pull down"));
 
 	if (onoff) {
 		if (gpio_direction_output(wlan_reg_on, 1)) {
@@ -852,7 +901,7 @@ static int
 dhd_wlan_set_carddetect(int val)
 {
 	struct device_node *root_node = NULL;
-	char *wlan_node = DHD_DT_COMPAT_ENTRY;
+	const char *wlan_node = DHD_DT_COMPAT_ENTRY;
 
 	root_node = of_find_compatible_node(NULL, NULL, wlan_node);
 	if (!root_node) {
@@ -914,19 +963,33 @@ set_affinity(unsigned int irq, const struct cpumask *cpumask)
 #ifdef DHD_HOST_CPUFREQ_BOOST_DEFAULT_ENAB
 uint32 dhd_cpufreq_boost = true;
 #else
-uint32 dhd_cpufreq_boost = false;
+uint32 dhd_cpufreq_boost;
 #endif /* DHD_HOST_CPUFREQ_BOOST_DEFAULT_ENAB */
 module_param(dhd_cpufreq_boost, uint, 0660);
 
 #define DHD_CPUFREQ_LITTLE      0u
+#if IS_ENABLED(CONFIG_SOC_LGA)
+#define DHD_CPUFREQ_BIG         4u
+#define DHD_CPUFREQ_BIGGER      5u
+#else
+#define DHD_CPUFREQ_BIG         4u
+#define DHD_CPUFREQ_BIGGER      7u
+#endif
+
+#if IS_ENABLED(CONFIG_SOC_LGA)
+#define DHD_LITTLE_CORE_PERF_FREQ   1459000u
+#define DHD_MID_CORE_PERF_FREQ      1267000u
+#define DHD_BIG_CORE_PERF_FREQ      1267000u
+#else
+#define DHD_LITTLE_CORE_PERF_FREQ   1548000u
+#define DHD_MID_CORE_PERF_FREQ      1549000u
+#define DHD_BIG_CORE_PERF_FREQ      2363000u
+#endif
 
 enum core_idx {
 	LITTLE = 0,
-	MID,
-#ifdef DHD_CPUFREQ_MID2
-	MID2,
-#endif
-	BIG,
+	MID = 1,
+	BIG = 2,
 	CORE_IDX_MAX
 };
 
@@ -936,17 +999,13 @@ typedef struct _dhd_host_cpufreq {
 	uint32 target_freq;
 } dhd_host_cpufreq;
 
-static dhd_host_cpufreq dhd_host_cpufreq_tbl [] =
-{
-	/* Little Core, */
+static dhd_host_cpufreq dhd_host_cpufreq_tbl[] = {
+	/* Little Core, 0-3 */
 	{DHD_CPUFREQ_LITTLE, 0, DHD_LITTLE_CORE_PERF_FREQ},
-	/* Mid Core, */
-	{DHD_CPUFREQ_MID, 0, DHD_MID_CORE_PERF_FREQ},
-#ifdef DHD_CPUFREQ_MID2
-	{DHD_CPUFREQ_MID2, 0, DHD_MID_CORE_PERF_FREQ},
-#endif
-	/* Big Core  */
-	{DHD_CPUFREQ_BIG, 0, DHD_BIG_CORE_PERF_FREQ}
+	/* Big Core, 4-7 */
+	{DHD_CPUFREQ_BIG, 0, DHD_MID_CORE_PERF_FREQ},
+	/* Bigger Core, 8-11 */
+	{DHD_CPUFREQ_BIGGER, 0, DHD_BIG_CORE_PERF_FREQ}
 };
 
 /*
@@ -955,7 +1014,7 @@ static dhd_host_cpufreq dhd_host_cpufreq_tbl [] =
  * set to zero when boost mode is disabled.
  * If any cpufreq policy is in boost mode, returns TRUE
  */
-bool dhd_is_cpufreq_boosted(void)
+static bool dhd_is_cpufreq_boosted(void)
 {
 	int i, arr_len;
 
@@ -1043,11 +1102,8 @@ void dhd_set_max_cpufreq(void)
 		}
 	}
 }
-#endif /* DHD_HOST_CPUFREQ_BOOST */
 
-#if defined(DHD_CUSTOM_PKT_COUNT_ENABLE)
-#if defined(DHD_HOST_CPUFREQ_BOOST)
-static void dhd_set_all_cpufreq(void)
+void dhd_set_all_cpufreq(void)
 {
 	struct cpufreq_policy *policy;
 	int i, arr_len;
@@ -1067,37 +1123,31 @@ static void dhd_set_all_cpufreq(void)
 			continue;
 		}
 
+		/* already in boost mode */
+		if (orig_min_freq) {
+			continue;
+		}
+
 		policy = cpufreq_cpu_get(cpuid);
 		if (policy) {
 			/* backup min freq */
-			if (!orig_min_freq)
-				dhd_host_cpufreq_tbl[i].orig_min_freq = policy->min;
+			dhd_host_cpufreq_tbl[i].orig_min_freq = policy->min;
 
 			if (policy->max < dhd_host_cpufreq_tbl[i].target_freq) {
 				policy->min = policy->max;
 			} else {
 				policy->min = dhd_host_cpufreq_tbl[i].target_freq;
 			}
-			if (!orig_min_freq) {
-				DHD_PRINT(("%s: min to max. policy%d cur:%u"
-					" orig_min:%u min:%u max:%u\n",
-					__FUNCTION__, cpuid, policy->cur,
-					dhd_host_cpufreq_tbl[i].orig_min_freq,
-					policy->min, policy->max));
-			} else {
-				DHD_INFO(("%s: min to max. policy%d cur:%u"
-					" orig_min:%u min:%u max:%u\n",
-					__FUNCTION__, cpuid, policy->cur,
-					dhd_host_cpufreq_tbl[i].orig_min_freq,
-					policy->min, policy->max));
-
-			}
+			DHD_PRINT(("%s: min to max. policy%d cur:%u orig_min:%u min:%u max:%u\n",
+				__FUNCTION__, cpuid, policy->cur,
+				dhd_host_cpufreq_tbl[i].orig_min_freq,
+				policy->min, policy->max));
 			cpufreq_cpu_put(policy);
 		}
 	}
 }
 
-static void dhd_set_cpufreq(enum core_idx idx)
+void dhd_set_cpufreq(enum core_idx idx)
 {
 	struct cpufreq_policy *policy;
 	int arr_len;
@@ -1143,7 +1193,7 @@ static void dhd_set_cpufreq(enum core_idx idx)
 	}
 }
 
-static void dhd_plat_reset_trx_pktcount(void)
+void dhd_plat_reset_trx_pktcount(void)
 {
 	tx_pkt_cnt = 0;
 	rx_pkt_cnt = 0;
@@ -1152,13 +1202,99 @@ static void dhd_plat_reset_trx_pktcount(void)
 	tx_pkt_delta = 0;
 	rx_pkt_delta = 0;
 }
-
-static bool is_mid_traffic(void)
+#else
+static bool dhd_is_cpufreq_boosted(void)
 {
-	return  (((tx_pkt_delta < PKT_COUNT_HIGH) && (tx_pkt_delta > PKT_COUNT_MID)) ||
-	     ((rx_pkt_delta < PKT_COUNT_HIGH) && (rx_pkt_delta > PKT_COUNT_MID)));
+	return FALSE;
 }
 #endif /* DHD_HOST_CPUFREQ_BOOST */
+
+static void
+irq_affinity_hysteresis_control(struct pci_dev *pdev,
+	uint64 curr_time_ns)
+{
+	int err = 0;
+
+	bool has_recent_affinity_update = (curr_time_ns - last_affinity_update_time_ns)
+		< (AFFINITY_UPDATE_MIN_PERIOD_SEC * NSEC_PER_SEC);
+	if (!pdev) {
+		DHD_ERROR(("%s : pdev is NULL\n", __FUNCTION__));
+		return;
+	}
+
+#ifdef DHD_HOST_CPUFREQ_BOOST
+	if (!is_irq_on_big_core && !dhd_is_cpufreq_boosted() &&
+	    (((tx_pkt_delta < PKT_COUNT_HIGH) && (tx_pkt_delta > PKT_COUNT_MID)) ||
+	     ((rx_pkt_delta < PKT_COUNT_HIGH) && (rx_pkt_delta > PKT_COUNT_MID)))) {
+		if (dhd_cpufreq_boost) {
+			dhd_set_cpufreq(MID);
+		}
+	}
+#endif /* DHD_HOST_CPUFREQ_BOOST */
+
+	if (!is_irq_on_big_core &&
+	   ((tx_pkt_delta > PKT_COUNT_HIGH) || (rx_pkt_delta > PKT_COUNT_HIGH))) {
+		err = set_affinity(pdev->irq, cpumask_of(affinity_big_core));
+		if (!err) {
+			is_irq_on_big_core = TRUE;
+			last_affinity_update_time_ns = curr_time_ns;
+#ifdef DHD_HOST_CPUFREQ_BOOST
+			if (dhd_cpufreq_boost) {
+				dhd_set_all_cpufreq();
+			}
+#endif /* DHD_HOST_CPUFREQ_BOOST */
+			DHD_INFO(("%s switches to big core %u successfully\n",
+				__FUNCTION__, affinity_big_core));
+		} else {
+			DHD_ERROR(("%s switches to big core unsuccessfully!\n", __FUNCTION__));
+		}
+	}
+	if (is_plat_pcie_resume ||
+		((is_irq_on_big_core || dhd_is_cpufreq_boosted()) &&
+		((tx_pkt_delta < PKT_COUNT_LOW) && (rx_pkt_delta < PKT_COUNT_LOW)) &&
+		!has_recent_affinity_update)) {
+		err = set_affinity(pdev->irq, cpumask_of(affinity_small_core));
+		if (!err) {
+			is_irq_on_big_core = FALSE;
+			is_plat_pcie_resume = FALSE;
+			last_affinity_update_time_ns = curr_time_ns;
+#ifdef DHD_HOST_CPUFREQ_BOOST
+			if (dhd_is_cpufreq_boosted()) {
+				dhd_restore_cpufreq();
+			}
+#endif /* DHD_HOST_CPUFREQ_BOOST */
+			DHD_INFO(("%s switches to small core %u successfully\n",
+				__FUNCTION__, affinity_small_core));
+		} else {
+			DHD_ERROR(("%s switches to all cores unsuccessfully\n", __FUNCTION__));
+		}
+	}
+}
+
+extern uint dhd_force_max_cpu_freq;
+
+static void dhd_force_affinity_cpufreq(struct pci_dev *pdev)
+{
+	int err;
+
+	if (is_plat_pcie_resume || !is_irq_on_big_core) {
+		err = set_affinity(pdev->irq, cpumask_of(affinity_big_core));
+		if (!err) {
+			is_irq_on_big_core = TRUE;
+			is_plat_pcie_resume = FALSE;
+#ifdef DHD_HOST_CPUFREQ_BOOST
+			if (dhd_cpufreq_boost) {
+				dhd_set_max_cpufreq();
+			}
+#endif /* DHD_HOST_CPUFREQ_BOOST */
+			DHD_PRINT(("%s switches to big core %u successfully\n",
+				__FUNCTION__, affinity_big_core));
+		} else {
+			DHD_ERROR(("%s switches to big core unsuccessfully!\n", __FUNCTION__));
+		}
+	}
+
+}
 
 void dhd_plat_tx_pktcount(void *plat_info, uint cnt)
 {
@@ -1228,156 +1364,6 @@ void dhd_plat_rx_pktcount(void *plat_info, uint cnt)
 	}
 }
 
-static bool is_high_traffic(void)
-{
-	return ((tx_pkt_delta > PKT_COUNT_HIGH)||(rx_pkt_delta > PKT_COUNT_HIGH));
-}
-
-static bool is_low_traffic(void)
-{
-	return ((tx_pkt_delta < PKT_COUNT_LOW)&&(rx_pkt_delta < PKT_COUNT_LOW));
-}
-
-#else /* DHD_CUSTOM_PKT_COUNT_ENABLE */
-#if defined(DHD_HOST_CPUFREQ_BOOST)
-static void dhd_set_all_cpufreq(void)
-{
-	dhd_set_max_cpufreq();
-}
-
-static void dhd_set_cpufreq(enum core_idx idx)
-{
-	return;
-}
-
-static void dhd_plat_reset_trx_pktcount(void)
-{
-	return;
-}
-
-static bool is_mid_traffic(void)
-{
-	return false;
-}
-#endif /* DHD_HOST_CPUFREQ_BOOST */
-
-void dhd_plat_tx_pktcount(void *plat_info, uint cnt)
-{
-	return;
-}
-
-void dhd_plat_rx_pktcount(void *plat_info, uint cnt)
-{
-	return;
-}
-
-static bool is_high_traffic(void)
-{
-	return (resched_streak_max >= RESCHED_STREAK_MAX_HIGH);
-}
-
-static bool is_low_traffic(void)
-{
-	return (resched_streak_max <= RESCHED_STREAK_MAX_LOW);
-}
-#endif /* DHD_CUSTOM_PKT_COUNT_ENABLE */
-
-static void
-irq_affinity_hysteresis_control(struct pci_dev *pdev,
-	uint64 curr_time_ns)
-{
-	int err = 0;
-	bool has_recent_affinity_update = (curr_time_ns - last_affinity_update_time_ns)
-		< (AFFINITY_UPDATE_MIN_PERIOD_SEC * NSEC_PER_SEC);
-	/*
-	 * To prevent pingpong effect, 16 times of AFFINITY_UPDATE_MIN_PERIOD_SEC
-	 * is used to drop irq affinity to small core.
-	 */
-	bool has_less_recent_affinity_update = (curr_time_ns - last_affinity_update_time_ns)
-		< ((AFFINITY_UPDATE_MIN_PERIOD_SEC << 4) * NSEC_PER_SEC);
-	if (!pdev) {
-		DHD_ERROR(("%s : pdev is NULL\n", __FUNCTION__));
-		return;
-	}
-
-	if (is_high_traffic() &&
-		(is_irq_on_big_core || !has_recent_affinity_update)) {
-		if (!is_irq_on_big_core) {
-			err = set_affinity(pdev->irq, cpumask_of(IRQ_AFFINITY_BIG_CORE));
-			if (!err) {
-				is_irq_on_big_core = TRUE;
-				is_plat_pcie_resume = FALSE;
-				last_affinity_update_time_ns = curr_time_ns;
-				DHD_INFO(("%s switches to big core successfully\n", __FUNCTION__));
-			} else {
-				DHD_ERROR(("%s switches to big core unsuccessfully!\n",
-					__FUNCTION__));
-			}
-		}
-#ifdef DHD_HOST_CPUFREQ_BOOST
-		if (dhd_cpufreq_boost) {
-			dhd_set_all_cpufreq();
-		}
-#endif /* DHD_HOST_CPUFREQ_BOOST */
-	}
-
-#if defined(DHD_HOST_CPUFREQ_BOOST)
-	if (is_mid_traffic()) {
-		if (!is_irq_on_big_core && !dhd_is_cpufreq_boosted()) {
-			if (dhd_cpufreq_boost) {
-#ifdef DHD_CPUFREQ_MID2
-				dhd_set_cpufreq(MID2);
-#else
-				dhd_set_cpufreq(MID);
-#endif
-			}
-		} else if (is_irq_on_big_core && !has_less_recent_affinity_update) {
-			err = set_affinity(pdev->irq, cpumask_of(IRQ_AFFINITY_SMALL_CORE));
-			if (!err) {
-				is_irq_on_big_core = FALSE;
-				is_plat_pcie_resume = FALSE;
-				last_affinity_update_time_ns = curr_time_ns;
-				if (dhd_is_cpufreq_boosted()) {
-					dhd_restore_cpufreq();
-				}
-				if (dhd_cpufreq_boost) {
-#ifdef DHD_CPUFREQ_MID2
-					dhd_set_cpufreq(MID2);
-#else
-					dhd_set_cpufreq(MID);
-#endif
-				}
-			}
-		}
-	}
-#endif /* DHD_HOST_CPUFREQ_BOOST */
-
-	if (is_plat_pcie_resume ||
-		(is_low_traffic() &&
-#ifdef DHD_HOST_CPUFREQ_BOOST
-		dhd_is_cpufreq_boosted() &&
-#endif /* DHD_HOST_CPUFREQ_BOOST */
-		!has_less_recent_affinity_update)) {
-		err = 0;
-		if (is_plat_pcie_resume || is_irq_on_big_core) {
-			err = set_affinity(pdev->irq, cpumask_of(IRQ_AFFINITY_SMALL_CORE));
-		}
-		if (!err) {
-			is_irq_on_big_core = FALSE;
-			is_plat_pcie_resume = FALSE;
-			last_affinity_update_time_ns = curr_time_ns;
-#ifdef DHD_HOST_CPUFREQ_BOOST
-			if (dhd_is_cpufreq_boosted()) {
-				dhd_restore_cpufreq();
-			}
-#endif /* DHD_HOST_CPUFREQ_BOOST */
-			DHD_INFO(("%s switches to all cores successfully\n", __FUNCTION__));
-		} else {
-			DHD_ERROR(("%s switches to all cores unsuccessfully\n", __FUNCTION__));
-		}
-	}
-}
-
 /*
  * DHD Core layer reports whether the bottom half is getting rescheduled or not
  * resched = 1, BH is getting rescheduled.
@@ -1390,22 +1376,10 @@ void dhd_plat_report_bh_sched(void *plat_info, int resched)
 	uint64 curr_time_ns;
 	uint64 time_delta_ns;
 
-#if !defined(DHD_CUSTOM_PKT_COUNT_ENABLE)
-	if (resched > 0) {
-		resched_streak++;
-		if (resched_streak <= RESCHED_STREAK_MAX_HIGH) {
-			return;
-		}
+	if (dhd_force_max_cpu_freq) {
+		dhd_force_affinity_cpufreq(p->pdev);
+		return;
 	}
-
-	if (resched_streak > resched_streak_max) {
-		resched_streak_max = resched_streak;
-	}
-	resched_streak = 0;
-
-	DHD_INFO(("%s resched_streak_max=%d\n",
-		__FUNCTION__, resched_streak_max));
-#endif /* DHD_CUSTOM_PKT_COUNT_ENABLE */
 
 	curr_time_ns = OSL_LOCALTIME_NS();
 	time_delta_ns = curr_time_ns - last_resched_cnt_check_time_ns;
@@ -1415,9 +1389,6 @@ void dhd_plat_report_bh_sched(void *plat_info, int resched)
 	last_resched_cnt_check_time_ns = curr_time_ns;
 
 	irq_affinity_hysteresis_control(p->pdev, curr_time_ns);
-#if !defined(DHD_CUSTOM_PKT_COUNT_ENABLE)
-	resched_streak_max = 0;
-#endif
 	return;
 }
 
@@ -1505,6 +1476,28 @@ dhd_wlan_init(void)
 	dhd_wlan_init_hardware_info();
 #endif /* SUPPORT_MULTIPLE_NVRAM || SUPPORT_MULTIPLE_CLMBLOB */
 
+	affinity_big_core = IRQ_AFFINITY_BIG_CORE;
+	if (affinity_big_core < 0 || (affinity_big_core > (num_possible_cpus() - 1))) {
+		affinity_big_core = num_possible_cpus() - 1;
+		DHD_ERROR(("%s: IRQ_AFFINITY_BIG_CORE=%u, num_cpus=%u, so set "
+			"affinity_big_core=%u\n", __FUNCTION__, IRQ_AFFINITY_BIG_CORE,
+			num_possible_cpus(), affinity_big_core));
+	}
+
+	affinity_small_core = IRQ_AFFINITY_SMALL_CORE;
+	if (affinity_small_core < 0 || affinity_small_core >= affinity_big_core) {
+		if (affinity_big_core > 0) {
+			affinity_small_core = affinity_big_core - 1;
+		} else {
+			affinity_small_core = affinity_big_core;
+		}
+		DHD_ERROR(("%s: IRQ_AFFINITY_SMALL_CORE=%u, affinity_big_core=%u, so set "
+			"affinity_small_core=%u\n", __FUNCTION__, IRQ_AFFINITY_SMALL_CORE,
+			affinity_big_core, affinity_small_core));
+	}
+	DHD_INFO(("%s: affinity_big_core=%u affinity_small_core=%u\n", __FUNCTION__,
+		affinity_big_core, affinity_small_core));
+
 #if !IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 #ifdef DHD_SUPPORT_L1SS
 	support_l1ss = TRUE;
@@ -1518,13 +1511,31 @@ fail:
 	return ret;
 }
 
+uint16 ep_device_id;
+#ifndef PCI_CFG_DID
+#define PCI_CFG_DID             2u
+#endif
+
 int
 dhd_wlan_deinit(void)
 {
 	if (gpio_is_valid(wlan_host_wake_up)) {
 		gpio_free(wlan_host_wake_up);
 	}
-
+	/* drive wl_reg_on low before freeing gpio only if the ep_device_id
+	 * read from config space matches with the BCMPCI_DEV_ID(the device id
+	 * for which the dhd is built for).
+	 * When WL_REG_ON is pulled down enumaration space is lost.
+	 * Later when the right dhd is loaded i.e ep_device_id and BCMPCI_DEV_ID matches,
+	 * RC doesnot re-enumarate the EP. So skip WL_REG_ON pull down if ep_device_id and
+	 * BCMPCI_DEV_ID doesnot match.
+	 */
+	if (ep_device_id == BCMPCI_DEV_ID) {
+		dhd_wlan_power(0);
+	} else {
+		DHD_PRINT(("%s skip WL_REG_ON pull down, devid mismatch(0x%x:0x%x)\n",
+			__FUNCTION__, ep_device_id, BCMPCI_DEV_ID));
+	}
 	if (gpio_is_valid(wlan_reg_on)) {
 		gpio_free(wlan_reg_on);
 	}
@@ -1558,6 +1569,9 @@ void dhd_plat_l1_exit(void)
 int dhd_plat_pcie_suspend(void *plat_info)
 {
 	_pcie_pm_suspend(pcie_ch_num);
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+	update_google_cdd_wifi_stat(CDD_WIFI_STAT_PCIE_LINK_UP, false);
+#endif
 	return 0;
 }
 
@@ -1566,9 +1580,9 @@ int dhd_plat_pcie_resume(void *plat_info)
 	int ret = 0;
 	ret = _pcie_pm_resume(pcie_ch_num);
 	is_plat_pcie_resume = TRUE;
-#if defined(DHD_HOST_CPUFREQ_BOOST)
+#ifdef DHD_HOST_CPUFREQ_BOOST
 	dhd_plat_reset_trx_pktcount();
-#endif /* DHD_HOST_CPUFREQ_BOOST */
+#endif	/* DHD_HOST_CPUFREQ_BOOST */
 	return ret;
 }
 
@@ -1594,6 +1608,68 @@ uint32 dhd_plat_get_rc_vendor_id(void)
 uint32 dhd_plat_get_rc_device_id(void)
 {
 	return GOOGLE_PCIE_DEVICE_ID;
+}
+
+int dhd_plat_check_pcie_state(void)
+{
+#if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
+	return 1;
+#else
+	int ret = 0;
+
+	DHD_PRINT(("%s: Function In\n", __FUNCTION__));
+
+	ret = google_pcie_link_status(pcie_ch_num);
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+	if (ret)
+		update_google_cdd_wifi_stat(CDD_WIFI_STAT_PCIE_LINK_UP, true);
+	else
+		update_google_cdd_wifi_stat(CDD_WIFI_STAT_PCIE_LINK_UP, false);
+#endif
+	DHD_PRINT(("%s: Function Out, ret = %d\n", __FUNCTION__, ret));
+	return ret;
+#endif /* CONFIG_GOOGLE_CRASH_DEBUG_DUMP */
+}
+
+void dhd_plat_check_msi(void)
+{
+#if IS_ENABLED(CONFIG_SOC_LGA)
+	u32 __iomem  *reg_ptr;
+	u32 val;
+
+	if (in_interrupt()) {
+		DHD_ERROR(("don't iomap in interrupt context"));
+		return;
+	}
+
+	reg_ptr = ioremap(MSI_MASK_REG, SZ_4);
+	if (!reg_ptr) {
+		DHD_ERROR(("reg_ptr is NULL"));
+		return;
+	}
+	val = ioread32(reg_ptr);
+	DHD_PRINT(("MSI Mask=%#08x\n", val));
+	iounmap(reg_ptr);
+
+	reg_ptr = ioremap(MSI_STAT_REG, SZ_4);
+	if (!reg_ptr) {
+		DHD_ERROR(("reg_ptr is NULL"));
+		return;
+	}
+	val = ioread32(reg_ptr);
+	DHD_PRINT(("MSI Status=%#08x\n", val));
+	iounmap(reg_ptr);
+
+	reg_ptr = ioremap(PCI_ICDS_REG, SZ_4);
+	if (!reg_ptr) {
+		DHD_ERROR(("reg_ptr is NULL"));
+		return;
+	}
+	val = ioread32(reg_ptr);
+	DHD_PRINT(("ICD Status=%#08x\n", val));
+	iounmap(reg_ptr);
+
+#endif /* CONFIG_SOC_LGA */
 }
 
 #define RXBUF_ALLOC_PAGE_SIZE
@@ -1642,6 +1718,20 @@ dhd_plat_unregister_coredump(void)
 }
 #endif /* DHD_COREDUMP */
 
+int
+dhd_plat_get_wlan_reg_on_gpio(void)
+{
+	return gpio_is_valid(wlan_reg_on) ?
+		gpio_get_value(wlan_reg_on) : -1;
+}
+
+void dhd_plat_pcie_dump_debug(void)
+{
+#if IS_ENABLED(CONFIG_SOC_LGA)
+	google_pcie_dump_debug(pcie_ch_num);
+#endif
+}
+
 #ifndef BCMDHD_MODULAR
 /* Required only for Built-in DHD */
 device_initcall(dhd_wlan_init);
@@ -1679,7 +1769,7 @@ dhd_pcie_l1ss_ctrl(int enable, int ch_num)
 
 	/* TODO: enable PCIE_LINK_STATE_CLKPM */
 	if (support_l1ss & enable) {
-		aspm_state = PCIE_LINK_STATE_L1 |
+		aspm_state = PCIE_LINK_STATE_L1 | PCIE_LINK_STATE_CLKPM |
 				PCIE_LINK_STATE_L1_1 | PCIE_LINK_STATE_L1_2;
 	}
 
@@ -1697,6 +1787,9 @@ dhd_pcie_poweron(int ch_num)
 	u16 val;
 	static u8 speed;
 	struct pci_dev *pci_dev;
+	u16 ltr = 0x1003;	/* 3145728 ns */
+	u32 ltr_reg;
+	int pos;
 
 	/*
 	 * First poweron will happen at the controller's max-link-speed as
@@ -1705,24 +1798,47 @@ dhd_pcie_poweron(int ch_num)
 	 */
 	if (!speed) {
 		ret = google_pcie_rc_poweron(ch_num);
-		if (ret)
+		if (ret) {
+			DHD_ERROR(("%s rc poweron failed: %d\n", __FUNCTION__, ret));
 			return ret;
+		}
 
 		pci_dev = dhd_get_pcidev(ch_num);
-		if (pci_dev == NULL)
+		if (pci_dev == NULL) {
+			DHD_ERROR(("%s failed to get pci_dev\n", __FUNCTION__));
 			return 0;
+		}
 
-		if (pcie_capability_read_word(pci_dev, PCI_EXP_LNKCAP2, &val) != 0)
+		if (pcie_capability_read_word(pci_dev, PCI_EXP_LNKCAP2, &val) != 0) {
+			DHD_ERROR(("%s failed to read PCI_EXP_LNKCAP2\n", __FUNCTION__));
 			return 0;
-
+		}
 		val &= PCI_EXP_LINKCAP2_SPEED_MASK;
 		if (fls(val) >= 2) {
 			speed = fls(val) - 1;
 			DHD_INFO(("%s: Using GEN%d link speed\n", __FUNCTION__, speed));
 		}
 
+		if (pci_read_config_word(pci_dev, PCI_CFG_DID, &ep_device_id) != 0) {
+			DHD_ERROR(("%s failed to read PCI_CFG_DID\n", __FUNCTION__));
+			return 0;
+		}
+		pos = pci_find_ext_capability(pci_dev, PCI_EXT_CAP_ID_LTR);
+		if (!pos)
+			return 0;
+
+		pci_read_config_dword(pci_dev, pos + PCI_LTR_MAX_SNOOP_LAT, &ltr_reg);
+
+		ltr_reg = (ltr << 16) | ltr;
+		pci_write_config_dword(pci_dev, pos + PCI_LTR_MAX_SNOOP_LAT, ltr_reg);
+		DHD_INFO(("%s: Default LTR value set to 3ms\n", __FUNCTION__));
+
 		return 0;
 	}
+
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+	update_google_cdd_wifi_stat(CDD_WIFI_STAT_PCIE_LINK_UP, true);
+#endif
 
 	return google_pcie_poweron_withspeed(ch_num, speed);
 }

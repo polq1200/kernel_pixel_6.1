@@ -3,6 +3,7 @@
  * Copyright 2019-2022 Google LLC
  */
 
+#include <linux/bitops.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -93,6 +94,11 @@ struct gvotable_election {
 	struct lock_class_key cb_lock_key;
 	struct lock_class_key re_lock_key;
 
+	char most_recent_reason[GVOTABLE_MAX_REASON_LEN];
+	void *most_recent_vote;
+
+	void *post_election_data;
+	gvotable_post_election_cb post_election_cb;
 };
 
 #define gvotable_lock_result(el) mutex_lock(&(el)->re_lock)
@@ -141,19 +147,19 @@ struct election_slot {
 	struct dentry *de;
 };
 
-int gvotable_comparator_uint_max(void *l, void *r)
+static int gvotable_comparator_uint(void *l, void *r)
 {
 	unsigned int a = *((unsigned int *)&l);
 	unsigned int b = *((unsigned int *)&r);
 
 	if (a > b)
 		return 1;
-	else if (a < b)
+
+	if (a < b)
 		return (-1);
-	else
-		return 0;
+
+	return 0;
 }
-EXPORT_SYMBOL_GPL(gvotable_comparator_uint_max);
 
 static int gvotable_comparator_int(void *l, void *r)
 {
@@ -162,10 +168,11 @@ static int gvotable_comparator_int(void *l, void *r)
 
 	if (a > b)
 		return 1;
-	else if (a < b)
+
+	if (a < b)
 		return (-1);
-	else
-		return 0;
+
+	return 0;
 }
 
 /* compares l and r as integers */
@@ -182,10 +189,17 @@ int gvotable_comparator_int_min(void *a, void *b)
 }
 EXPORT_SYMBOL_GPL(gvotable_comparator_int_min);
 
-/* compares l and r as integers */
+/* compares l and r as unsigned integers */
+int gvotable_comparator_uint_max(void *a, void *b)
+{
+	return -gvotable_comparator_uint(a, b);
+}
+EXPORT_SYMBOL_GPL(gvotable_comparator_uint_max);
+
+/* compares l and r as unsigned integers */
 int gvotable_comparator_uint_min(void *a, void *b)
 {
-	return -gvotable_comparator_uint_max(a, b);
+	return gvotable_comparator_uint(a, b);
 }
 EXPORT_SYMBOL_GPL(gvotable_comparator_uint_min);
 
@@ -236,6 +250,16 @@ int gvotable_v2s_uint_hex(char *str, size_t len, const void *vote)
 }
 EXPORT_SYMBOL_GPL(gvotable_v2s_uint_hex);
 
+int gvotable_v2s_compound(char *str, size_t len, const void *vote)
+{
+	uint64_t val = (uint64_t)vote;
+	uint32_t high = upper_32_bits(val);
+	uint32_t low = lower_32_bits(val);
+
+	return scnprintf(str, len, "compound(hi=%d, lo=%d)", high, low);
+}
+EXPORT_SYMBOL_GPL(gvotable_v2s_compound);
+
 /* GVotable internal hashing function */
 static u32 gvotable_internal_hash(const char *str)
 {
@@ -267,6 +291,14 @@ static void gvotable_internal_update_result(struct gvotable_election *el,
 
 #define GVOTABLE_BOOL_TRUE_VALUE	((void *)1)
 #define GVOTABLE_BOOL_FALSE_VALUE	((void *)0)
+
+/* must be run before every gvotable_internal_run_election */
+static void gvotable_set_most_recent_vote(struct gvotable_election *el,
+					  const char *reason, void *vote)
+{
+	strscpy(el->most_recent_reason, reason, GVOTABLE_MAX_REASON_LEN);
+	el->most_recent_vote = vote;
+}
 
 /*
  * Determine the new result for the election, return true if the el->callback
@@ -733,6 +765,7 @@ int gvotable_set_default(struct gvotable_election *el, void *default_val)
 {
 	bool changed;
 	int ret = 0;
+	bool cb_run = false;
 
 	/* boolean elections don't allow changing the default value */
 	if (!el || el->is_bool_type)
@@ -743,10 +776,13 @@ int gvotable_set_default(struct gvotable_election *el, void *default_val)
 	changed = el->has_default_vote == 1 && el->default_vote != default_val;
 	el->default_vote = default_val;
 
+	gvotable_set_most_recent_vote(el, default_reason, default_val);
+
 	if (changed) {
 		if (gvotable_internal_run_election(el)) {
 			gvotable_unlock_result(el);
 			ret = gvotable_run_callback(el);
+			cb_run = true;
 		}
 	} else {
 		gvotable_unlock_result(el);
@@ -754,6 +790,10 @@ int gvotable_set_default(struct gvotable_election *el, void *default_val)
 
 	el->has_default_vote = 1;
 	gvotable_unlock_callback(el);
+
+	if (cb_run && el->post_election_cb)
+		ret = el->post_election_cb(el, el->post_election_data, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_set_default);
@@ -771,10 +811,39 @@ int gvotable_get_default(struct gvotable_election *el, void **result)
 	return 0;
 }
 
+int gvotable_set_default_compound(struct gvotable_election *el, int default_hi, int default_lo)
+{
+	void *default_val;
+
+	default_val = (void *)(((long)default_hi << 32) | (unsigned int)default_lo);
+
+	return gvotable_set_default(el, default_val);
+}
+EXPORT_SYMBOL_GPL(gvotable_set_default_compound);
+
+int gvotable_get_default_compound(struct gvotable_election *el, int *default_hi, int *default_lo)
+{
+	void *result;
+	int ret;
+
+	if (!default_hi || !default_lo)
+		return -EINVAL;
+
+	ret = gvotable_get_default(el, &result);
+	if (ret)
+		return ret;
+
+	*default_hi = upper_32_bits((long)result);
+	*default_lo = lower_32_bits((long)result);
+
+	return 0;
+}
+
 /* Enable or disable usage of a default value for a given election */
 int gvotable_use_default(struct gvotable_election *el, bool default_is_enabled)
 {
 	int ret = 0;
+	bool cb_run = false;
 
 	/* boolean elections don't allow changing the default value */
 	if (!el || el->is_bool_type)
@@ -782,15 +851,22 @@ int gvotable_use_default(struct gvotable_election *el, bool default_is_enabled)
 
 	gvotable_lock_election(el);
 
+	gvotable_set_most_recent_vote(el, default_reason, el->default_vote);
+
 	el->has_default_vote = default_is_enabled;
 	if (gvotable_internal_run_election(el)) {
 		gvotable_unlock_result(el);
 		ret = gvotable_run_callback(el);
+		cb_run = true;
 	} else {
 		gvotable_unlock_result(el);
 	}
 
 	gvotable_unlock_callback(el);
+
+	if (cb_run && el->post_election_cb)
+		ret = el->post_election_cb(el, el->post_election_data, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_use_default);
@@ -830,6 +906,29 @@ int gvotable_get_current_vote(struct gvotable_election *el, const void **vote)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_get_current_vote);
+
+int gvotable_get_current_compound_vote(struct gvotable_election *el,
+				       int *vote_hi, int *vote_lo)
+{
+	int ret;
+	const void *vote;
+
+	if (!el || !vote_hi || !vote_lo)
+		return -EINVAL;
+
+	gvotable_lock_result(el);
+	ret = gvotable_get_current_result_unlocked(el, &vote);
+	gvotable_unlock_result(el);
+
+	if (ret)
+		return ret;
+
+	*vote_hi = upper_32_bits((long)vote);
+	*vote_lo = lower_32_bits((long)vote);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(gvotable_get_current_compound_vote);
 
 int gvotable_get_current_int_vote(struct gvotable_election *el)
 {
@@ -921,6 +1020,26 @@ int gvotable_get_vote(struct gvotable_election *el, const char *reason,
 }
 EXPORT_SYMBOL_GPL(gvotable_get_vote);
 
+int gvotable_get_compound_vote(struct gvotable_election *el, const char *reason,
+			       int *vote_hi, int *vote_lo)
+{
+	void *ptr;
+	int ret;
+
+	if (!vote_hi || !vote_lo)
+		return -EINVAL;
+
+	ret = gvotable_get_vote(el, reason, &ptr);
+	if (ret)
+		return ret;
+
+	*vote_hi = upper_32_bits((long)ptr);
+	*vote_lo = lower_32_bits((long)ptr);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(gvotable_get_compound_vote);
+
 int gvotable_get_int_vote(struct gvotable_election *el, const char *reason)
 {
 	void *ptr;
@@ -985,7 +1104,7 @@ static void gvotable_add_ballot(struct gvotable_election *el,
 				struct ballot *ballot,
 				bool enabled)
 {
-	struct ballot *last, *tmp;
+	struct ballot *tmp;
 	void *vote = ballot->vote[ballot->idx];
 
 	/* If this is the only element, just add */
@@ -1007,8 +1126,7 @@ static void gvotable_add_ballot(struct gvotable_election *el,
 	}
 
 	/* Add element after the last one */
-	last = list_last_entry(&el->votes, struct ballot, list);
-	list_add(&ballot->list, &last->list);
+	list_add_tail(&ballot->list, &el->votes);
 
 	el->num_votes++;
 }
@@ -1018,6 +1136,7 @@ int gvotable_recast_ballot(struct gvotable_election *el, const char *reason,
 {
 	struct ballot *ballot;
 	int ret;
+	bool cb_run = false;
 
 	gvotable_lock_election(el);
 
@@ -1036,15 +1155,21 @@ int gvotable_recast_ballot(struct gvotable_election *el, const char *reason,
 	}
 
 	gvotable_add_ballot(el, ballot, enabled);
+	gvotable_set_most_recent_vote(el, reason, ballot->vote[ballot->idx]);
 
 	if (gvotable_internal_run_election(el)) {
 		gvotable_unlock_result(el);
 		ret = gvotable_run_callback(el);
+		cb_run = true;
 	} else {
 		gvotable_unlock_result(el);
 	}
 
 	gvotable_unlock_callback(el);
+
+	if (cb_run && el->post_election_cb)
+		ret = el->post_election_cb(el, el->post_election_data, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_recast_ballot);
@@ -1055,6 +1180,9 @@ int gvotable_run_election(struct gvotable_election *el, bool force_callback)
 {
 	bool callback;
 	int ret = 0;
+	bool cb_run = false;
+	const char *reason = el->force_result_is_enabled ? DEBUGFS_FORCE_VOTE_REASON : "";
+	void *value = el->force_result_is_enabled ? el->force_result : (void *)0;
 
 	/*
 	 * In theory this should be calling gvotable_internal_run_election() even if the result
@@ -1062,12 +1190,15 @@ int gvotable_run_election(struct gvotable_election *el, bool force_callback)
 	 * you call the callback with the right value.
 	 */
 	gvotable_lock_election(el);
+	gvotable_set_most_recent_vote(el, reason, value);
+
 	callback = gvotable_internal_run_election(el);
 	gvotable_unlock_result(el);
 
 	if (!el->callback)
 		goto exit_done;
 
+	cb_run = true;
 	if (el->force_result_is_enabled) {
 		ret = el->callback(el, DEBUGFS_FORCE_VOTE_REASON, el->force_result);
 		goto exit_done;
@@ -1078,6 +1209,10 @@ int gvotable_run_election(struct gvotable_election *el, bool force_callback)
 
 exit_done:
 	gvotable_unlock_callback(el);
+
+	if (cb_run && el->post_election_cb)
+		ret = el->post_election_cb(el, el->post_election_data, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_run_election);
@@ -1112,6 +1247,7 @@ int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
 	bool allocated = false;
 	struct ballot *ballot;
 	int ret;
+	bool cb_run = false;
 
 	if (!el || !reason || reason[0] == 0)
 		return -EINVAL;
@@ -1151,6 +1287,8 @@ int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
 		return ret;
 	}
 
+	gvotable_set_most_recent_vote(el, reason, vote);
+
 	/* an existing vote is disabled in place */
 	if (allocated || enabled)
 		gvotable_add_ballot(el, ballot, enabled);
@@ -1158,14 +1296,40 @@ int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
 	if (gvotable_internal_run_election(el)) {
 		gvotable_unlock_result(el);
 		ret = gvotable_run_callback(el);
+		cb_run = true;
 	} else {
 		gvotable_unlock_result(el);
 	}
 
 	gvotable_unlock_callback(el);
+
+	if (cb_run && el->post_election_cb)
+		ret = el->post_election_cb(el, el->post_election_data, ret);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gvotable_cast_vote);
+
+void *gvotable_get_most_recent_vote(struct gvotable_election *el)
+{
+	return el->most_recent_vote;
+}
+EXPORT_SYMBOL_GPL(gvotable_get_most_recent_vote);
+
+char *gvotable_get_most_recent_reason(struct gvotable_election *el)
+{
+	return el->most_recent_reason;
+}
+EXPORT_SYMBOL_GPL(gvotable_get_most_recent_reason);
+
+void gvotable_register_post_election_work(struct gvotable_election *el,
+					  void *data,
+					  gvotable_post_election_cb cb)
+{
+	el->post_election_cb = cb;
+	el->post_election_data = data;
+}
+EXPORT_SYMBOL_GPL(gvotable_register_post_election_work);
 
 #ifdef CONFIG_DEBUG_FS
 
@@ -1415,6 +1579,7 @@ static int debugfs_force_int_value(void *data, u64 val)
 	struct election_slot *slot = data;
 	u64 pre_val = (u64)slot->el->force_result;
 	int ret = 0;
+	bool cb_run = false;
 
 	gvotable_lock_election(slot->el);
 
@@ -1424,12 +1589,21 @@ static int debugfs_force_int_value(void *data, u64 val)
 	if (!slot->el->callback)
 		goto exit_done;
 
-	if (slot->el->force_result_is_enabled && (pre_val != val))
+	if (slot->el->force_result_is_enabled && (pre_val != val)) {
+		gvotable_set_most_recent_vote(slot->el, DEBUGFS_FORCE_VOTE_REASON,
+					      slot->el->force_result);
+
 		ret = slot->el->callback(slot->el, DEBUGFS_FORCE_VOTE_REASON,
 					 slot->el->force_result);
+		cb_run = true;
+	}
 
 exit_done:
 	gvotable_unlock_callback(slot->el);
+
+	if (cb_run && slot->el->post_election_cb)
+		ret = slot->el->post_election_cb(slot->el, slot->el->post_election_data, ret);
+
 	return ret;
 }
 
@@ -1440,6 +1614,9 @@ static int debugfs_force_int_active(void *data, u64 val)
 {
 	struct election_slot *slot = data;
 	int ret = 0;
+	bool cb_run = false;
+	const char *reason = !!val ? DEBUGFS_FORCE_VOTE_REASON : "";
+	void *value = !!val ? slot->el->force_result : (void *)0;
 
 	gvotable_lock_election(slot->el);
 
@@ -1449,6 +1626,10 @@ static int debugfs_force_int_active(void *data, u64 val)
 	if (!slot->el->callback)
 		goto exit_done;
 
+	cb_run = true;
+
+	gvotable_set_most_recent_vote(slot->el, reason, value);
+
 	if (slot->el->force_result_is_enabled)
 		ret = slot->el->callback(slot->el, DEBUGFS_FORCE_VOTE_REASON,
 					 slot->el->force_result);
@@ -1457,6 +1638,10 @@ static int debugfs_force_int_active(void *data, u64 val)
 
 exit_done:
 	gvotable_unlock_callback(slot->el);
+
+	if (cb_run && slot->el->post_election_cb)
+		ret = slot->el->post_election_cb(slot->el, slot->el->post_election_data, ret);
+
 	return ret;
 }
 

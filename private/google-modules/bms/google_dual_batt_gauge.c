@@ -46,6 +46,8 @@
 #define REPORT_BASE	1
 #define REPORT_SEC	2
 
+#define DUAL_BATT_BASE_TEMP_COEFF	40
+#define DUAL_BATT_SEC_TEMP_COEFF	-75
 #define BATT_DC_DEBOUNCE_SEC	60
 
 static int debug_printk_prlog = LOGLEVEL_INFO;
@@ -68,6 +70,8 @@ struct dual_fg_drv {
 
 	struct power_supply *first_fg_psy;
 	struct power_supply *second_fg_psy;
+	struct device_link *first_fg_link;
+	struct device_link *second_fg_link;
 
 	struct mutex stats_lock;
 
@@ -96,7 +100,6 @@ struct dual_fg_drv {
 	int sec_charge_full;
 
 	bool init_complete;
-	bool resume_complete;
 	bool cable_in;
 
 	u32 vsec_offset;
@@ -119,11 +122,12 @@ struct dual_fg_drv {
 	ktime_t sec_dc_time;
 };
 
-static int gdbatt_resume_check(struct dual_fg_drv *dual_fg_drv) {
+static int gdbatt_init_check(struct dual_fg_drv *dual_fg_drv)
+{
 	int ret = 0;
 
 	pm_runtime_get_sync(dual_fg_drv->device);
-	if (!dual_fg_drv->init_complete || !dual_fg_drv->resume_complete)
+	if (!dual_fg_drv->init_complete)
 		ret = -EAGAIN;
 	pm_runtime_put_sync(dual_fg_drv->device);
 
@@ -406,6 +410,17 @@ static bool gdbatt_ov_handler_allowed(struct dual_fg_drv *dual_fg_drv, int vbatt
 	return ov_allowed_idx < 0 ? false : vbatt_idx >= ov_allowed_idx;
 }
 
+static int gdbatt_temp_compensate(int temp, int coeff, int iavg)
+{
+	int comp_temp;
+	long long var;
+
+	iavg /= 1000;
+	var = (coeff * iavg * iavg) / (1000 * 1000 * 100);
+	comp_temp = temp + (int)var;
+	return comp_temp;
+}
+
 static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 {
 	struct gbms_chg_profile *profile = &dual_fg_drv->chg_profile;
@@ -416,6 +431,8 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	struct power_supply *sec_psy = dual_fg_drv->second_fg_psy;
 	int ret = 0;
 	bool check_current = false;
+	int iavg, ibase, isec;
+	union power_supply_propval val;
 
 	if (!dual_fg_drv->cable_in)
 		goto check_done;
@@ -428,6 +445,18 @@ static void gdbatt_select_cc_max(struct dual_fg_drv *dual_fg_drv)
 	if (ret < 0)
 		goto check_done;
 
+	ret = power_supply_get_property(base_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &val);
+	ibase = val.intval;
+	ret |= power_supply_get_property(sec_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &val);
+	if (ret)
+		goto iavg_error;
+
+	isec = val.intval;
+	iavg = ibase + isec;
+	base_temp = gdbatt_temp_compensate(base_temp, DUAL_BATT_BASE_TEMP_COEFF, iavg);
+	sec_temp = gdbatt_temp_compensate(sec_temp, DUAL_BATT_SEC_TEMP_COEFF, iavg);
+
+iavg_error:
 	base_vbatt = GPSY_GET_PROP(base_psy, POWER_SUPPLY_PROP_VOLTAGE_NOW);
 	if (base_vbatt < 0)
 		goto check_done;
@@ -662,7 +691,7 @@ static void gbatt_update_stats(struct dual_fg_drv *dual_fg_drv)
 	ktime_t elap;
 	int ret = 0;
 
-	ret = gdbatt_resume_check(dual_fg_drv);
+	ret = gdbatt_init_check(dual_fg_drv);
 	if (ret < 0)
 		return;
 
@@ -730,6 +759,43 @@ done:
 			 msecs_to_jiffies(DUAL_FG_WORK_PERIOD_MS));
 }
 
+static int gdbatt_get_compensated_temp(struct dual_fg_drv *dual_fg_drv)
+{
+	int ibase, isec, iavg, comp_temp, base_temp, sec_temp;
+	struct power_supply *base_psy = dual_fg_drv->first_fg_psy;
+	struct power_supply *sec_psy = dual_fg_drv->second_fg_psy;
+	union power_supply_propval val;
+	int ret;
+
+	comp_temp = -EINVAL;
+
+	ret = gdbatt_get_temp(base_psy, &base_temp);
+	ret |= gdbatt_get_temp(sec_psy, &sec_temp);
+	dev_dbg(dual_fg_drv->device, "%s: base_temp: %d, sec_temp: %d (%d)\n", __func__, base_temp,
+		sec_temp, ret);
+	if (ret)
+		goto done;
+
+	comp_temp = max(base_temp, sec_temp);
+
+	ret = power_supply_get_property(base_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &val);
+	ibase = val.intval;
+	ret |= power_supply_get_property(sec_psy, POWER_SUPPLY_PROP_CURRENT_AVG, &val);
+	if (ret)
+		goto done;
+
+	isec = val.intval;
+	iavg = ibase + isec;
+	base_temp = gdbatt_temp_compensate(base_temp, DUAL_BATT_BASE_TEMP_COEFF, iavg);
+	sec_temp = gdbatt_temp_compensate(sec_temp, DUAL_BATT_SEC_TEMP_COEFF, iavg);
+	comp_temp = max(base_temp, sec_temp);
+
+done:
+	dev_dbg(dual_fg_drv->device, "%s: iavg: %d, comp_base_temp: %d, comp_sec_temp: %d, comp_temp: %d\n",
+		__func__, iavg, base_temp, sec_temp, comp_temp);
+	return comp_temp;
+}
+
 static int gdbatt_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
@@ -740,7 +806,7 @@ static int gdbatt_get_property(struct power_supply *psy,
 	union power_supply_propval fg_1;
 	union power_supply_propval fg_2;
 
-	err = gdbatt_resume_check(dual_fg_drv);
+	err = gdbatt_init_check(dual_fg_drv);
 	if (err != 0)
 		return err;
 
@@ -771,27 +837,20 @@ static int gdbatt_get_property(struct power_supply *psy,
 		val->intval = fg_1.intval + fg_2.intval;
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		val->intval = max(fg_1.intval, fg_2.intval);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
-		val->intval = max(fg_1.intval, fg_2.intval);
+		val->intval = gdbatt_get_compensated_temp(dual_fg_drv);
+		if (val->intval < 0)
+			dev_info(dual_fg_drv->device, "%s: error %d reading prop TEMP\n",
+				 __func__, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		val->intval = gdbatt_get_dual_vbatt(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
-	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
 		val->intval = gdbatt_get_dual_vbatt(dual_fg_drv, fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = gdbatt_get_capacity(dual_fg_drv, fg_1.intval, fg_2.intval);
-		break;
-	case POWER_SUPPLY_PROP_HEALTH:
-		/* larger one is bad. TODO: confirm its priority */
-		val->intval = max(fg_1.intval, fg_2.intval);
 		break;
 	case POWER_SUPPLY_PROP_STATUS:
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
@@ -856,7 +915,7 @@ static int gdbatt_gbms_get_property(struct power_supply *psy,
 	union gbms_propval fg_1;
 	union gbms_propval fg_2;
 
-	err = gdbatt_resume_check(dual_fg_drv);
+	err = gdbatt_init_check(dual_fg_drv);
 	if (err != 0)
 		return err;
 
@@ -947,7 +1006,7 @@ static int gdbatt_gbms_set_property(struct power_supply *psy,
 					power_supply_get_drvdata(psy);
 	int ret = 0;
 
-	ret = gdbatt_resume_check(dual_fg_drv);
+	ret = gdbatt_init_check(dual_fg_drv);
 	if (ret != 0)
 		return ret;
 
@@ -1002,7 +1061,8 @@ static int gdbatt_gbms_set_property(struct power_supply *psy,
 
 		ret = GPSY_SET_PROP(dual_fg_drv->first_fg_psy, psp, val->prop.intval);
 		if (ret < 0)
-			pr_err("Cannot set NEED_CHARGE_TO_FULL to the first FG, ret=%d\n", ret);
+			pr_err("Cannot set NEED_CHARGE_TO_FULL to the first FG, ret=%d\n",
+			       ret);
 		break;
 	default:
 		pr_debug("%s: route to gdbatt_set_property, psp:%d\n", __func__, psp);
@@ -1241,8 +1301,22 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 
 	gdbatt_stats_init(dual_fg_drv);
 
+	if (dual_fg_drv->first_fg_psy && dual_fg_drv->first_fg_psy->dev.parent) {
+		dual_fg_drv->first_fg_link = device_link_add(dual_fg_drv->device,
+							     dual_fg_drv->first_fg_psy->dev.parent,
+							     DL_FLAG_STATELESS);
+		if (!dual_fg_drv->first_fg_link)
+			dev_err(dual_fg_drv->device, "failed to add first fg link\n");
+	}
+	if (dual_fg_drv->second_fg_psy && dual_fg_drv->second_fg_psy->dev.parent) {
+		dual_fg_drv->second_fg_link = device_link_add(dual_fg_drv->device,
+							      dual_fg_drv->second_fg_psy->dev.parent,
+							      DL_FLAG_STATELESS);
+		if (!dual_fg_drv->second_fg_link)
+			dev_err(dual_fg_drv->device, "failed to add second fg link\n");
+	}
+
 	dual_fg_drv->init_complete = true;
-	dual_fg_drv->resume_complete = true;
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
 
@@ -1442,6 +1516,11 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 	if (!dual_fg_drv)
 		return 0;
 
+	if (dual_fg_drv->first_fg_link)
+		device_link_del(dual_fg_drv->first_fg_link);
+	if (dual_fg_drv->second_fg_link)
+		device_link_del(dual_fg_drv->second_fg_link);
+
 	power_supply_unreg_notifier(&dual_fg_drv->fg_nb);
 	gbms_free_chg_profile(&dual_fg_drv->chg_profile);
 	kfree(dual_fg_drv->base_profile.cccm_limits);
@@ -1465,30 +1544,16 @@ static void google_dual_batt_gauge_shutdown(struct platform_device *pdev)
 
 static int __maybe_unused google_dual_batt_pm_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
-
-	pm_runtime_get_sync(dual_fg_drv->device);
-	dual_fg_drv->resume_complete = false;
-	pm_runtime_put_sync(dual_fg_drv->device);
-
 	return 0;
 }
 
 static int __maybe_unused google_dual_batt_pm_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct dual_fg_drv *dual_fg_drv = platform_get_drvdata(pdev);
-
-	pm_runtime_get_sync(dual_fg_drv->device);
-	dual_fg_drv->resume_complete = true;
-	pm_runtime_put_sync(dual_fg_drv->device);
-
 	return 0;
 }
 
 static const struct dev_pm_ops google_dual_batt_pm_ops = {
-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(google_dual_batt_pm_suspend, google_dual_batt_pm_resume)
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(google_dual_batt_pm_suspend, google_dual_batt_pm_resume)
 };
 
 static const struct of_device_id google_dual_batt_gauge_of_match[] = {
