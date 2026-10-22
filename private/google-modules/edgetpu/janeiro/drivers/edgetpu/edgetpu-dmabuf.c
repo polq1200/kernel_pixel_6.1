@@ -10,7 +10,6 @@
 #include <linux/dma-direction.h>
 #include <linux/dma-fence.h>
 #include <linux/dma-mapping.h>
-#include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/ktime.h>
 #include <linux/list.h>
@@ -640,7 +639,7 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 	struct dma_buf *dmabuf;
 	edgetpu_map_flag_t flags = arg->flags;
 	u64 size;
-	enum dma_data_direction dir = map_flag_to_host_dma_dir(flags);
+	const enum dma_data_direction dir = map_flag_to_host_dma_dir(flags);
 	struct edgetpu_dev *etdev;
 	struct edgetpu_dmabuf_map *dmap;
 	tpu_addr_t tpu_addr;
@@ -655,12 +654,6 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group,
 		etdev_dbg(group->etdev, "%s: dma_buf_get returns %ld\n",
 			  __func__, PTR_ERR(dmabuf));
 		return PTR_ERR(dmabuf);
-	}
-
-	if (!(dmabuf->file->f_mode & FMODE_WRITE) && dir != DMA_TO_DEVICE) {
-		flags &= ~EDGETPU_MAP_DIR_MASK;
-		flags |= EDGETPU_MAP_DMA_TO_DEVICE;
-		dir = DMA_TO_DEVICE;
 	}
 
 	dmap = alloc_dmabuf_map(group, flags);
@@ -775,8 +768,7 @@ int edgetpu_unmap_dmabuf(struct edgetpu_device_group *group, u32 die_index, tpu_
 int edgetpu_map_bulk_dmabuf(struct edgetpu_device_group *group,
 			    struct edgetpu_map_bulk_dmabuf_ioctl *arg)
 {
-	edgetpu_map_flag_t flags = arg->flags;
-	enum dma_data_direction dir = map_flag_to_host_dma_dir(flags);
+	const enum dma_data_direction dir = map_flag_to_host_dma_dir(arg->flags);
 	int ret = -EINVAL;
 	struct edgetpu_dmabuf_map *bmap;
 	struct dma_buf *dmabuf;
@@ -811,13 +803,6 @@ int edgetpu_map_bulk_dmabuf(struct edgetpu_device_group *group,
 			}
 			if (arg->size > dmabuf->size)
 				goto err_release_bmap;
-			if (!(dmabuf->file->f_mode & FMODE_WRITE) && dir != DMA_TO_DEVICE) {
-				flags &= ~EDGETPU_MAP_DIR_MASK;
-				flags |= EDGETPU_MAP_DMA_TO_DEVICE;
-				dir = DMA_TO_DEVICE;
-				bmap->map.flags = flags;
-				bmap->map.dir = dir;
-			}
 			bmap->dmabufs[i] = dmabuf;
 		}
 	}

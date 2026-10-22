@@ -772,9 +772,6 @@
 					 0
 					 1000>;
 
-				/* Thread priority */
-				transaction-thread-priority = <99>;
-
 				i2c-lock-group-id = <0>;
 			};
 
@@ -818,9 +815,6 @@
 				power-down-seq-delays-us =
 					<0
 					1000>;
-
-				/* Thread priority */
-				transaction-thread-priority = <99>;
 			};
 
 			/* EEPROM SMAUG for IMENTET UW */
@@ -863,9 +857,6 @@
 				power-down-seq-delays-us =
 					<0
 					1000>;
-
-				/* Thread priority */
-				transaction-thread-priority = <99>;
 			};
 
 			/* EEPROM SMAUG for SVAROG OUTER */
@@ -908,9 +899,6 @@
 				power-down-seq-delays-us =
 					<0
 					1000>;
-
-				/* Thread priority */
-				transaction-thread-priority = <99>;
 			};
 
 			/* EEPROM JOTNAR for DOKKAEBI */

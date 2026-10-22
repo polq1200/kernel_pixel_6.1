@@ -179,9 +179,6 @@
 					 0
 					 1000>;
 
-				/* Thread priority */
-				transaction-thread-priority = <99>;
-
 				i2c-lock-group-id = <0>;
 			};
 
