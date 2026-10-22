@@ -33,8 +33,7 @@
 /* Config2: must not enable TAlert */
 #define MAX77779_FG_MODEL_VERSION_REG	MAX77779_FG_TAlrtTh
 
-#define MAX77779_FG_NDGB_ADDRESS_I2C 0x37
-#define MAX77779_FG_NDGB_ADDRESS_SPMI 0x7
+#define MAX77779_FG_NDGB_ADDRESS 0x37
 
 static const struct maxfg_reg max77779_fg[] = {
 	[MAXFG_TAG_avgc] = { ATOM_INIT_REG16(MAX77779_FG_AvgCurrent)},
@@ -97,8 +96,7 @@ static const struct maxfg_reg max77779_debug_fg[] = {
 
 struct max77779_fg_chip {
 	struct device *dev;
-	struct i2c_client *secondary_i2c;
-	struct spmi_device *secondary_spmi;
+	struct i2c_client *secondary;
 	struct device *pmic_dev;
 
 	int irq;
@@ -133,6 +131,7 @@ struct max77779_fg_chip {
 	u16 designcap;
 
 	bool init_complete;
+	bool resume_complete;
 	bool irq_disabled;
 	u16 health_status;
 	int fake_capacity;

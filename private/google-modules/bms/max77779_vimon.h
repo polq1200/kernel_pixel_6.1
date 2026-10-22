@@ -21,11 +21,6 @@
 #define MAX77779_VIMON_ENTRIES_PER_VI_PAIR 2
 
 #define MAX77779_VIMON_SMPL_CNT 64
-
-#define MAX77779_VIMON_NONE_MODE 8
-#define MAX77779_VIMON_LOGBUFFER_MODE 6
-#define MAX77779_VIMON_DEFAULT_MODE 0
-
 #define MAX77779_VIMON_DATA_RETRIEVE_DELAY 0
 
 /*
@@ -69,24 +64,19 @@ enum vimon_trigger_source {
 
 struct vimon_client_callbacks {
 	/* on_sample_ready: required */
-	void (*on_sample_ready)(void *private_data, const enum vimon_trigger_source reason,
+	void (*on_sample_ready)(void *private, const enum vimon_trigger_source reason,
 				const u16 *data, const size_t len);
 
 	/* on_unregistered: required */
-	void (*on_removed)(void *private_data);
+	void (*on_removed)(void *private);
 
 	/* extra_trigger: optional */
-	bool (*extra_trigger)(void *private_data, const u16 *data, const size_t len);
+	bool (*extra_trigger)(void *private, const u16 *data, const size_t len);
 };
 
-int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private_data,
+int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private,
 			    struct vimon_client_callbacks *cb);
 void vimon_unregister_callback(struct device *dev, struct vimon_client_callbacks *cb);
-
-struct max77779_vimon_config {
-	u16 mode;
-	u16 mask;
-};
 
 struct max77779_vimon_data {
 	struct device *dev;
@@ -98,11 +88,11 @@ struct max77779_vimon_data {
 	bool run_in_offmode;
 
 	struct mutex vimon_lock;
+	struct mutex vimon_cb_lock;
 	unsigned max_cnt;
 	unsigned max_triggers;
 	enum max77779_vimon_state state;
 	uint16_t *buf;
-	uint16_t *buf_adj;
 	size_t buf_size;
 	size_t buf_len;
 
@@ -114,10 +104,7 @@ struct max77779_vimon_data {
 
 	int (*direct_reg_read)(struct max77779_vimon_data *data, u8 reg, unsigned int *val);
 	int (*direct_reg_write)(struct max77779_vimon_data *data, u8 reg, unsigned int val);
-
-	struct power_supply *psy;
-	struct max77779_vimon_config config;
-	struct max77779_vimon_config last_config;
+	u16 trigger_src;
 };
 
 int max77779_vimon_init(struct max77779_vimon_data *data);
